@@ -8,6 +8,15 @@
 // Construction / configuration
 // ---------------------------------------------------------------------------
 
+static uint8_t modeToBpp(int mode)
+{
+    switch (mode) {
+        case BB_MODE_2BPP: return 2;
+        case BB_MODE_4BPP: return 4;
+        default:           return 1;
+    }
+}
+
 FastJsonDL::FastJsonDL(FASTEPD& epd)
     : _epd(epd)
     , _width(0)
@@ -21,6 +30,9 @@ FastJsonDL::FastJsonDL(FASTEPD& epd)
     // with setDisplaySize() if needed.
     _width  = static_cast<uint16_t>(_epd.width());
     _height = static_cast<uint16_t>(_epd.height());
+    // Inherit the active FastEPD mode so omitted "display_bpp" does not
+    // unexpectedly force 1BPP when the caller already selected 2/4BPP.
+    _bpp = modeToBpp(_epd.getMode());
 }
 
 void FastJsonDL::setDisplaySize(uint16_t width, uint16_t height)

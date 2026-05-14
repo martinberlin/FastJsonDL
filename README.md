@@ -25,7 +25,7 @@ from any endpoint.  Built on top of
 
 | Field         | Type    | Default | Description |
 |---------------|---------|---------|-------------|
-| `display_bpp` | integer | `1`     | Bits per pixel: `1`, `2`, or `4`. |
+| `display_bpp` | integer | current EPD mode (usually `1`) | Bits per pixel: `1`, `2`, or `4`. If omitted, FastJsonDL keeps the mode active on the `FASTEPD` instance when it was constructed. |
 | `clear`       | bool    | `false` | When `true`, fills the framebuffer with white before rendering any items. Use this to avoid uninitialised pixel data appearing as vertical stripes on the display. |
 
 ## Supported item types

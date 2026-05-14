@@ -84,6 +84,7 @@ public:
 
     /// Set the default bits-per-pixel mode used when the JSON payload does not
     /// contain a "display_bpp" field.  Valid values: 1, 2, 4.
+    /// Initial value inherits the current FASTEPD mode at construction time.
     void setDefaultBpp(uint8_t bpp);
 
     /// Register a named-font table.
