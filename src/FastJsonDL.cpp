@@ -1,0 +1,311 @@
+#include "FastJsonDL.h"
+#include "cJSON.h"
+#include <string.h>
+#include <stdio.h>
+
+// ---------------------------------------------------------------------------
+// Construction / configuration
+// ---------------------------------------------------------------------------
+
+FastJsonDL::FastJsonDL(FASTEPD& epd)
+    : _epd(epd)
+    , _width(0)
+    , _height(0)
+    , _bpp(1)
+    , _fonts(nullptr)
+    , _fontCount(0)
+{
+    _lastError[0] = '\0';
+    // Initialise logical dimensions from the panel; callers may override them
+    // with setDisplaySize() if needed.
+    _width  = static_cast<uint16_t>(_epd.width());
+    _height = static_cast<uint16_t>(_epd.height());
+}
+
+void FastJsonDL::setDisplaySize(uint16_t width, uint16_t height)
+{
+    _width  = width;
+    _height = height;
+}
+
+void FastJsonDL::setDefaultBpp(uint8_t bpp)
+{
+    _bpp = bpp;
+}
+
+void FastJsonDL::setFontRegistry(const FastJsonDLFont* fonts, size_t count)
+{
+    _fonts     = fonts;
+    _fontCount = count;
+}
+
+const char* FastJsonDL::getLastError() const
+{
+    return _lastError;
+}
+
+// ---------------------------------------------------------------------------
+// Public render entry points
+// ---------------------------------------------------------------------------
+
+bool FastJsonDL::renderJsonString(const char* json)
+{
+    if (!json) {
+        snprintf(_lastError, sizeof(_lastError), "Null JSON string");
+        return false;
+    }
+    return parseAndRender(json, strlen(json));
+}
+
+bool FastJsonDL::renderJson(const char* json, size_t len)
+{
+    if (!json) {
+        snprintf(_lastError, sizeof(_lastError), "Null JSON buffer");
+        return false;
+    }
+    return parseAndRender(json, len);
+}
+
+// ---------------------------------------------------------------------------
+// Core parse-and-render pipeline
+// ---------------------------------------------------------------------------
+
+// Helper: map a bits-per-pixel integer to the FastEPD BB_MODE_* constant.
+static int bppToMode(int bpp)
+{
+    switch (bpp) {
+        case 2:  return BB_MODE_2BPP;
+        case 4:  return BB_MODE_4BPP;
+        default: return BB_MODE_1BPP;
+    }
+}
+
+bool FastJsonDL::parseAndRender(const char* json, size_t len)
+{
+    _lastError[0] = '\0';
+
+    cJSON* root = cJSON_ParseWithLength(json, len);
+    if (!root) {
+        const char* errPtr = cJSON_GetErrorPtr();
+        snprintf(_lastError, sizeof(_lastError),
+                 "JSON parse error near: %.40s", errPtr ? errPtr : "(unknown)");
+        return false;
+    }
+
+    // Honour an optional top-level "display_bpp" field; fall back to the
+    // default bpp configured via setDefaultBpp().
+    cJSON* bppNode = cJSON_GetObjectItemCaseSensitive(root, "display_bpp");
+    if (cJSON_IsNumber(bppNode)) {
+        _epd.setMode(bppToMode(bppNode->valueint));
+    } else {
+        _epd.setMode(bppToMode(_bpp));
+    }
+
+    cJSON* items = cJSON_GetObjectItemCaseSensitive(root, "items");
+    if (!cJSON_IsArray(items)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "No 'items' array found in JSON");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    bool  success = true;
+    cJSON* item   = nullptr;
+    cJSON_ArrayForEach(item, items) {
+        if (!renderItem(item)) {
+            // _lastError has already been populated by the failing call.
+            success = false;
+            break;
+        }
+    }
+
+    cJSON_Delete(root);
+    return success;
+}
+
+// ---------------------------------------------------------------------------
+// Item dispatcher
+// ---------------------------------------------------------------------------
+
+bool FastJsonDL::renderItem(cJSON* item)
+{
+    cJSON* typeNode = cJSON_GetObjectItemCaseSensitive(item, "type");
+    if (!cJSON_IsString(typeNode) || !typeNode->valuestring) {
+        snprintf(_lastError, sizeof(_lastError), "Item missing 'type' field");
+        return false;
+    }
+
+    const char* type = typeNode->valuestring;
+
+    if (strcmp(type, "drawString")  == 0) return renderText(item);
+    if (strcmp(type, "fillRect")    == 0) return renderFillRect(item);
+    if (strcmp(type, "drawRect")    == 0) return renderDrawRect(item);
+    if (strcmp(type, "drawLine")    == 0) return renderDrawLine(item);
+    if (strcmp(type, "fillCircle")  == 0) return renderFillCircle(item);
+    if (strcmp(type, "drawCircle")  == 0) return renderDrawCircle(item);
+
+    snprintf(_lastError, sizeof(_lastError),
+             "Unknown item type: %.64s", type);
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Individual item renderers
+// ---------------------------------------------------------------------------
+
+bool FastJsonDL::renderText(cJSON* item)
+{
+    cJSON* fontNode   = cJSON_GetObjectItemCaseSensitive(item, "font");
+    cJSON* stringNode = cJSON_GetObjectItemCaseSensitive(item, "string");
+    cJSON* xNode      = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode      = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* colorNode  = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsString(stringNode) || !stringNode->valuestring) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "drawString item missing 'string' field");
+        return false;
+    }
+
+    int x     = cJSON_IsNumber(xNode)     ? xNode->valueint     : 0;
+    int y     = cJSON_IsNumber(yNode)     ? yNode->valueint     : 0;
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+
+    // Resolve a named font from the registry when requested.
+    if (cJSON_IsString(fontNode) && fontNode->valuestring) {
+        const void* fontData = findFont(fontNode->valuestring);
+        if (!fontData) {
+            snprintf(_lastError, sizeof(_lastError),
+                     "Font not found in registry: %.64s",
+                     fontNode->valuestring);
+            return false;
+        }
+        _epd.setFont(fontData);
+    }
+
+    _epd.setTextColor(color);
+    _epd.drawString(stringNode->valuestring, x, y);
+    return true;
+}
+
+bool FastJsonDL::renderFillRect(cJSON* item)
+{
+    cJSON* xNode     = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode     = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* wNode     = cJSON_GetObjectItemCaseSensitive(item, "w");
+    cJSON* hNode     = cJSON_GetObjectItemCaseSensitive(item, "h");
+    cJSON* colorNode = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode) ||
+        !cJSON_IsNumber(wNode) || !cJSON_IsNumber(hNode)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "fillRect item missing required numeric fields (x, y, w, h)");
+        return false;
+    }
+
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+    _epd.fillRect(xNode->valueint, yNode->valueint,
+                  wNode->valueint, hNode->valueint,
+                  static_cast<uint8_t>(color));
+    return true;
+}
+
+bool FastJsonDL::renderDrawRect(cJSON* item)
+{
+    cJSON* xNode     = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode     = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* wNode     = cJSON_GetObjectItemCaseSensitive(item, "w");
+    cJSON* hNode     = cJSON_GetObjectItemCaseSensitive(item, "h");
+    cJSON* colorNode = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode) ||
+        !cJSON_IsNumber(wNode) || !cJSON_IsNumber(hNode)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "drawRect item missing required numeric fields (x, y, w, h)");
+        return false;
+    }
+
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+    _epd.drawRect(xNode->valueint, yNode->valueint,
+                  wNode->valueint, hNode->valueint,
+                  static_cast<uint8_t>(color));
+    return true;
+}
+
+bool FastJsonDL::renderDrawLine(cJSON* item)
+{
+    cJSON* x1Node    = cJSON_GetObjectItemCaseSensitive(item, "x1");
+    cJSON* y1Node    = cJSON_GetObjectItemCaseSensitive(item, "y1");
+    cJSON* x2Node    = cJSON_GetObjectItemCaseSensitive(item, "x2");
+    cJSON* y2Node    = cJSON_GetObjectItemCaseSensitive(item, "y2");
+    cJSON* colorNode = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsNumber(x1Node) || !cJSON_IsNumber(y1Node) ||
+        !cJSON_IsNumber(x2Node) || !cJSON_IsNumber(y2Node)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "drawLine item missing required numeric fields (x1, y1, x2, y2)");
+        return false;
+    }
+
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+    _epd.drawLine(x1Node->valueint, y1Node->valueint,
+                  x2Node->valueint, y2Node->valueint, color);
+    return true;
+}
+
+bool FastJsonDL::renderFillCircle(cJSON* item)
+{
+    cJSON* xNode     = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode     = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* rNode     = cJSON_GetObjectItemCaseSensitive(item, "r");
+    cJSON* colorNode = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode) ||
+        !cJSON_IsNumber(rNode)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "fillCircle item missing required numeric fields (x, y, r)");
+        return false;
+    }
+
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+    _epd.fillCircle(xNode->valueint, yNode->valueint, rNode->valueint,
+                    static_cast<uint32_t>(color));
+    return true;
+}
+
+bool FastJsonDL::renderDrawCircle(cJSON* item)
+{
+    cJSON* xNode     = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode     = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* rNode     = cJSON_GetObjectItemCaseSensitive(item, "r");
+    cJSON* colorNode = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode) ||
+        !cJSON_IsNumber(rNode)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "drawCircle item missing required numeric fields (x, y, r)");
+        return false;
+    }
+
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+    _epd.drawCircle(xNode->valueint, yNode->valueint, rNode->valueint,
+                    static_cast<uint32_t>(color));
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Font registry lookup
+// ---------------------------------------------------------------------------
+
+const void* FastJsonDL::findFont(const char* name) const
+{
+    if (!_fonts || !name) {
+        return nullptr;
+    }
+    for (size_t i = 0; i < _fontCount; ++i) {
+        if (_fonts[i].name && strcmp(_fonts[i].name, name) == 0) {
+            return _fonts[i].data;
+        }
+    }
+    return nullptr;
+}
