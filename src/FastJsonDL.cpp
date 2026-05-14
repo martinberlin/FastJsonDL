@@ -102,6 +102,14 @@ bool FastJsonDL::parseAndRender(const char* json, size_t len)
         _epd.setMode(bppToMode(_bpp));
     }
 
+    // Optional top-level "clear" field: when true, fill the framebuffer with
+    // white before rendering any items.  This avoids uninitialised pixel data
+    // (visible as vertical stripes) when fullUpdate() is called after render.
+    cJSON* clearNode = cJSON_GetObjectItemCaseSensitive(root, "clear");
+    if (cJSON_IsTrue(clearNode)) {
+        _epd.fillScreen(BBEP_WHITE);
+    }
+
     cJSON* items = cJSON_GetObjectItemCaseSensitive(root, "items");
     if (!cJSON_IsArray(items)) {
         snprintf(_lastError, sizeof(_lastError),

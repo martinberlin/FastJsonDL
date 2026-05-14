@@ -21,6 +21,13 @@ from any endpoint.  Built on top of
 
 ---
 
+## Top-level fields
+
+| Field         | Type    | Default | Description |
+|---------------|---------|---------|-------------|
+| `display_bpp` | integer | `1`     | Bits per pixel: `1`, `2`, or `4`. |
+| `clear`       | bool    | `false` | When `true`, fills the framebuffer with white before rendering any items. Use this to avoid uninitialised pixel data appearing as vertical stripes on the display. |
+
 ## Supported item types
 
 | `"type"`       | Required fields          | Optional |
@@ -42,6 +49,7 @@ omitted.
 ```json
 {
   "display_bpp": 1,
+  "clear": true,
   "items": [
     {
       "type": "fillRect",
