@@ -34,6 +34,13 @@ static const FastJsonDLFont fonts[] = {
 // ORDER matters: items are rendered top-to-bottom, just as they appear in the
 // "items" array.  Drawing a black bar before the white text ensures the text
 // is visible.
+//
+// NOTE — y coordinate for drawString:
+// When a BB-format font is loaded (as produced by FastEPD fontconvert), the y
+// value is the TEXT BASELINE, not the top-left of the glyph.  Ubuntu40 has an
+// ascender height of approximately 50 pixels, so the glyph top sits at
+// (y - 50).  Using "y": 10 would place the top of the characters at y = -40,
+// entirely off-screen and silently invisible.  Always set y >= font ascender.
 static const char LAYOUT_JSON[] = R"({
   "display_bpp": 1,
   "clear": true,
@@ -43,7 +50,7 @@ static const char LAYOUT_JSON[] = R"({
       "x": 0,
       "y": 0,
       "w": 540,
-      "h": 60,
+      "h": 80,
       "c": 0
     },
     {
@@ -51,7 +58,7 @@ static const char LAYOUT_JSON[] = R"({
       "font": "Ubuntu40",
       "string": "Hello from FastJsonDL!",
       "x": 10,
-      "y": 10,
+      "y": 50,
       "c": 1
     },
     {

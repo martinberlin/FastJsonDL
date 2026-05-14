@@ -8,11 +8,17 @@
 // Example JSON:
 //   {
 //     "display_bpp": 1,
+//     "clear": true,
 //     "items": [
-//       { "type": "fillRect",   "x": 0,  "y": 0,   "w": 540, "h": 60, "c": 0 },
-//       { "type": "drawString", "string": "Hello!", "x": 10, "y": 20, "c": 1 }
+//       { "type": "fillRect",   "x": 0,  "y": 0,   "w": 540, "h": 80, "c": 0 },
+//       { "type": "drawString", "font": "Ubuntu40", "string": "Hello!",
+//         "x": 10, "y": 50, "c": 1 }
 //     ]
 //   }
+//
+// NOTE — drawString y coordinate:
+//   FastEPD BB-format fonts use y as the TEXT BASELINE.  For a 40 pt font the
+//   ascender is ~50 px, so set y >= 50 to keep the text on-screen.
 //
 // Supported item types:
 //   drawString  — x, y, string, c, [font]

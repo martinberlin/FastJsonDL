@@ -42,6 +42,15 @@ from any endpoint.  Built on top of
 `c` is the colour value (0 = black, 1 = white); it defaults to black when
 omitted.
 
+> **`drawString` — y is the text baseline**
+> FastEPD BB-format fonts (produced by `fontconvert`) treat `y` as the **text
+> baseline**, not the top-left corner of the glyph.  For a 40 pt font the
+> ascender height is approximately 50 px, so the top of the rendered characters
+> sits at `y − 50`.  Setting `"y": 10` with such a font places the glyphs
+> almost entirely above the top edge of the screen (invisible, no error).
+> Always set `y` ≥ the font's ascender height — for Ubuntu40 use `"y": 50` or
+> greater.
+
 ---
 
 ## Example JSON
@@ -53,14 +62,14 @@ omitted.
   "items": [
     {
       "type": "fillRect",
-      "x": 0, "y": 0, "w": 540, "h": 60,
+      "x": 0, "y": 0, "w": 540, "h": 80,
       "c": 0
     },
     {
       "type": "drawString",
       "font": "Ubuntu40",
       "string": "Hello from FastJsonDL!",
-      "x": 10, "y": 10,
+      "x": 10, "y": 50,
       "c": 1
     },
     {
