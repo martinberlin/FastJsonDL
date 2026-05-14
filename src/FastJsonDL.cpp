@@ -81,6 +81,16 @@ static int bppToMode(int bpp)
     }
 }
 
+// Helper: map a bits-per-pixel mode to its "white" pixel value.
+static uint8_t bppToWhite(int bpp)
+{
+    switch (bpp) {
+        case 2:  return 0x03;
+        case 4:  return 0x0f;
+        default: return BBEP_WHITE; // 1BPP white
+    }
+}
+
 bool FastJsonDL::parseAndRender(const char* json, size_t len)
 {
     _lastError[0] = '\0';
@@ -96,18 +106,15 @@ bool FastJsonDL::parseAndRender(const char* json, size_t len)
     // Honour an optional top-level "display_bpp" field; fall back to the
     // default bpp configured via setDefaultBpp().
     cJSON* bppNode = cJSON_GetObjectItemCaseSensitive(root, "display_bpp");
-    if (cJSON_IsNumber(bppNode)) {
-        _epd.setMode(bppToMode(bppNode->valueint));
-    } else {
-        _epd.setMode(bppToMode(_bpp));
-    }
+    int effectiveBpp = cJSON_IsNumber(bppNode) ? bppNode->valueint : _bpp;
+    _epd.setMode(bppToMode(effectiveBpp));
 
     // Optional top-level "clear" field: when true, fill the framebuffer with
     // white before rendering any items.  This avoids uninitialised pixel data
     // (visible as vertical stripes) when fullUpdate() is called after render.
     cJSON* clearNode = cJSON_GetObjectItemCaseSensitive(root, "clear");
     if (cJSON_IsTrue(clearNode)) {
-        _epd.fillScreen(BBEP_WHITE);
+        _epd.fillScreen(bppToWhite(effectiveBpp));
     }
 
     cJSON* items = cJSON_GetObjectItemCaseSensitive(root, "items");

@@ -39,8 +39,12 @@ from any endpoint.  Built on top of
 | `fillCircle`   | `x`, `y`, `r`            | `c`      |
 | `drawCircle`   | `x`, `y`, `r`            | `c`      |
 
-`c` is the colour value (0 = black, 1 = white); it defaults to black when
-omitted.
+`c` is the colour value and depends on `display_bpp`:
+- 1BPP: `0..1`   (`0` = black, `1` = white)
+- 2BPP: `0..3`   (`0` = black, `3` = white)
+- 4BPP: `0..15`  (`0` = black, `15` = white)
+
+When omitted, `c` defaults to black (`0`).
 
 > **`drawString` — y is the text baseline**
 > FastEPD BB-format fonts (produced by `fontconvert`) treat `y` as the **text
