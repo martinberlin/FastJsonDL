@@ -76,28 +76,37 @@ static const char LAYOUT_JSON[] = R"({
 // ---------------------------------------------------------------------------
 // app_main
 // ---------------------------------------------------------------------------
+
+// Using heap-allocated pointers avoids a Store access fault on RISC-V targets
+// (e.g. ESP32-C5) where constructing a large C++ object in BSS/static storage
+// inside app_main() can crash inside bbepInitPanel().  This matches the
+// lifecycle used in production C5 firmware.
+static FASTEPD      *epaper = nullptr;
+static FastJsonDL   *dl     = nullptr;
+
 extern "C" void app_main(void)
 {
-    static FASTEPD epd;
+    // Allocate the EPD driver on the heap.
+    epaper = new FASTEPD();
 
     // Initialise the panel.  Replace BB_PANEL_M5PAPERS3 with the constant
     // that matches your hardware (see the BB_PANEL_* enum in FastEPD.h).
-    int rc = epd.initPanel(BB_PANEL_M5PAPERS3);
+    int rc = epaper->initPanel(BB_PANEL_M5PAPERS3);
     if (rc != BBEP_SUCCESS) {
         printf("EPD init failed (%d)\n", rc);
         return;
     }
 
-    // Build the renderer and register the font table.
-    static FastJsonDL dl(epd);
-    dl.setFontRegistry(fonts, sizeof(fonts) / sizeof(fonts[0]));
+    // Build the renderer on the heap and register the font table.
+    dl = new FastJsonDL(*epaper);
+    dl->setFontRegistry(fonts, sizeof(fonts) / sizeof(fonts[0]));
 
     // Render the JSON layout.
-    if (!dl.renderJsonString(LAYOUT_JSON)) {
-        printf("FastJsonDL error: %s\n", dl.getLastError());
+    if (!dl->renderJsonString(LAYOUT_JSON)) {
+        printf("FastJsonDL error: %s\n", dl->getLastError());
         return;
     }
 
     // Push the frame buffer to the physical display.
-    epd.fullUpdate();
+    epaper->fullUpdate();
 }
