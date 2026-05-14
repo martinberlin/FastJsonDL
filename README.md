@@ -111,7 +111,8 @@ dependencies:
 
 `FastEPD` is intentionally not declared as a managed dependency by this
 component. Add your own FastEPD source (for example a submodule or a custom
-branch checkout) in your project and wire it as a normal ESP-IDF component.
+branch checkout) in your project and wire it as a normal ESP-IDF component
+named `FastEPD`.
 
 ### As a local component
 
