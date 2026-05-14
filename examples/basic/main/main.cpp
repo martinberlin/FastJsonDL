@@ -21,7 +21,8 @@
 // Without valid font data the drawString item will produce no visible output.
 // ---------------------------------------------------------------------------
 extern const uint8_t Ubuntu40[];   // declaration only; provide the definition
-                                   // in a separate font source file.
+                                   // in a separate font source file, or this
+                                   // example will fail to link.
 
 // Font registry: maps JSON "font" field values to in-memory font data.
 static const FastJsonDLFont fonts[] = {
@@ -31,10 +32,10 @@ static const FastJsonDLFont fonts[] = {
 // ---------------------------------------------------------------------------
 // JSON layout
 // ---------------------------------------------------------------------------
-// Minimal font-diagnostic layout:
-// - Force 4BPP (0..15 greyscale).
-// - Clear the frame buffer to white.
-// - Draw one black text item (c:0) with no background shapes.
+// Creative 4BPP demo layout:
+// - Force 4BPP (0..15 greyscale) and clear to white.
+// - Build simple layered shapes and lines.
+// - Render multiple text colors to make grayscale differences obvious.
 //
 // NOTE — y coordinate for drawString:
 // When a BB-format font is loaded (as produced by FastEPD fontconvert), the y
@@ -46,12 +47,47 @@ static const char LAYOUT_JSON[] = R"({
   "display_bpp": 4,
   "clear": true,
   "items": [
+    { "type": "fillRect", "x": 0, "y": 0, "w": 540, "h": 120, "c": 14 },
+    { "type": "fillRect", "x": 20, "y": 150, "w": 500, "h": 220, "c": 12 },
+    { "type": "drawRect", "x": 20, "y": 150, "w": 500, "h": 220, "c": 4 },
+    { "type": "drawLine", "x1": 20, "y1": 150, "x2": 520, "y2": 370, "c": 6 },
+    { "type": "drawLine", "x1": 520, "y1": 150, "x2": 20, "y2": 370, "c": 6 },
+    { "type": "fillCircle", "x": 90, "y": 520, "r": 60, "c": 10 },
+    { "type": "drawCircle", "x": 90, "y": 520, "r": 60, "c": 2 },
+    { "type": "fillCircle", "x": 270, "y": 520, "r": 60, "c": 7 },
+    { "type": "drawCircle", "x": 270, "y": 520, "r": 60, "c": 2 },
+    { "type": "fillCircle", "x": 450, "y": 520, "r": 60, "c": 3 },
+    { "type": "drawCircle", "x": 450, "y": 520, "r": 60, "c": 2 },
     {
       "type": "drawString",
       "font": "Ubuntu40",
-      "string": "Hello from FastJsonDL!",
+      "string": "FastJsonDL",
       "x": 10,
       "y": 70,
+      "c": 0
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu40",
+      "string": "Grayscale: c0 c7 c14",
+      "x": 30,
+      "y": 240,
+      "c": 7
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu40",
+      "string": "Now with working shades",
+      "x": 30,
+      "y": 330,
+      "c": 14
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu40",
+      "string": "0   7   14",
+      "x": 120,
+      "y": 560,
       "c": 0
     }
   ]
