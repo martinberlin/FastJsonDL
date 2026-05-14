@@ -26,7 +26,6 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "FastEPD.h"
 
 // ---------------------------------------------------------------------------
 // Font registry entry
@@ -46,6 +45,7 @@ struct FastJsonDLFont {
 // implementation file.
 // ---------------------------------------------------------------------------
 struct cJSON;
+class FASTEPD;
 
 // ---------------------------------------------------------------------------
 // FastJsonDL

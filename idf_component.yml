@@ -8,5 +8,3 @@ url: "https://github.com/martinberlin/FastJsonDL"
 dependencies:
   idf:
     version: ">=5.0.0"
-  FastEPD:
-    git: "https://github.com/bitbank2/FastEPD.git"

@@ -10,5 +10,5 @@
 idf_component_register(
     SRCS        "src/FastJsonDL.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES     json FastEPD
+    REQUIRES     json
 )

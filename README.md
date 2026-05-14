@@ -107,9 +107,11 @@ Add to your project's `idf_component.yml`:
 dependencies:
   martinberlin__FastJsonDL:
     git: "https://github.com/martinberlin/FastJsonDL.git"
-  FastEPD:
-    git: "https://github.com/bitbank2/FastEPD.git"
 ```
+
+`FastEPD` is intentionally not declared as a managed dependency by this
+component. Add your own FastEPD source (for example a submodule or a custom
+branch checkout) in your project and wire it as a normal ESP-IDF component.
 
 ### As a local component
 
@@ -118,8 +120,10 @@ Clone into your project's `components/` directory:
 ```sh
 cd components
 git clone https://github.com/martinberlin/FastJsonDL.git FastJsonDL
-git clone https://github.com/bitbank2/FastEPD.git FastEPD
 ```
+
+Then add your own FastEPD component (for example as a submodule pointing to
+your preferred branch) under `components/FastEPD`.
 
 Then add `FastJsonDL` to the `REQUIRES` list in your app component's
 `CMakeLists.txt`.
@@ -130,7 +134,7 @@ Then add `FastJsonDL` to the `REQUIRES` list in your app component's
 
 | Dependency | Source |
 |------------|--------|
-| [FastEPD](https://github.com/bitbank2/FastEPD) | External component |
+| FastEPD | User-provided ESP-IDF component (e.g. local submodule/custom branch) |
 | cJSON | Ships with ESP-IDF (`json` component) |
 
 ---
