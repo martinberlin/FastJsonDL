@@ -7,12 +7,11 @@
 //
 // Example JSON:
 //   {
-//     "display_bpp": 1,
+//     "display_bpp": 4,
 //     "clear": true,
 //     "items": [
-//       { "type": "fillRect",   "x": 0,  "y": 0,   "w": 540, "h": 80, "c": 0 },
 //       { "type": "drawString", "font": "Ubuntu40", "string": "Hello!",
-//         "x": 10, "y": 50, "c": 1 }
+//         "x": 10, "y": 70, "c": 0 }
 //     ]
 //   }
 //

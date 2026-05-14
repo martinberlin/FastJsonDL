@@ -57,24 +57,14 @@ omitted.
 
 ```json
 {
-  "display_bpp": 1,
+  "display_bpp": 4,
   "clear": true,
   "items": [
-    {
-      "type": "fillRect",
-      "x": 0, "y": 0, "w": 540, "h": 80,
-      "c": 0
-    },
     {
       "type": "drawString",
       "font": "Ubuntu40",
       "string": "Hello from FastJsonDL!",
-      "x": 10, "y": 50,
-      "c": 1
-    },
-    {
-      "type": "drawRect",
-      "x": 10, "y": 80, "w": 300, "h": 120,
+      "x": 10, "y": 70,
       "c": 0
     }
   ]

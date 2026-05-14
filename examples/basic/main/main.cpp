@@ -31,9 +31,10 @@ static const FastJsonDLFont fonts[] = {
 // ---------------------------------------------------------------------------
 // JSON layout
 // ---------------------------------------------------------------------------
-// ORDER matters: items are rendered top-to-bottom, just as they appear in the
-// "items" array.  Drawing a black bar before the white text ensures the text
-// is visible.
+// Minimal font-diagnostic layout:
+// - Force 4BPP (0..15 greyscale).
+// - Clear the frame buffer to white.
+// - Draw one black text item (c:0) with no background shapes.
 //
 // NOTE — y coordinate for drawString:
 // When a BB-format font is loaded (as produced by FastEPD fontconvert), the y
@@ -42,46 +43,15 @@ static const FastJsonDLFont fonts[] = {
 // (y - 50).  Using "y": 10 would place the top of the characters at y = -40,
 // entirely off-screen and silently invisible.  Always set y >= font ascender.
 static const char LAYOUT_JSON[] = R"({
-  "display_bpp": 1,
+  "display_bpp": 4,
   "clear": true,
   "items": [
-    {
-      "type": "fillRect",
-      "x": 0,
-      "y": 0,
-      "w": 540,
-      "h": 80,
-      "c": 0
-    },
     {
       "type": "drawString",
       "font": "Ubuntu40",
       "string": "Hello from FastJsonDL!",
       "x": 10,
-      "y": 50,
-      "c": 1
-    },
-    {
-      "type": "drawRect",
-      "x": 10,
-      "y": 80,
-      "w": 300,
-      "h": 120,
-      "c": 0
-    },
-    {
-      "type": "drawLine",
-      "x1": 10,
-      "y1": 220,
-      "x2": 310,
-      "y2": 220,
-      "c": 0
-    },
-    {
-      "type": "fillCircle",
-      "x": 160,
-      "y": 300,
-      "r": 40,
+      "y": 70,
       "c": 0
     }
   ]
@@ -126,10 +96,12 @@ extern "C" void app_main(void)
     dl->setFontRegistry(fonts, sizeof(fonts) / sizeof(fonts[0]));
 
     // Render the JSON layout.
+    printf("FastJsonDL: rendering layout...\n");
     if (!dl->renderJsonString(LAYOUT_JSON)) {
         printf("FastJsonDL error: %s\n", dl->getLastError());
         return;
     }
+    printf("FastJsonDL: render OK, updating panel\n");
 
     // Push the frame buffer to the physical display.
     epaper->fullUpdate();
