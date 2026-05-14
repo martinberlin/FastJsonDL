@@ -97,6 +97,16 @@ extern "C" void app_main(void)
         return;
     }
 
+    // Optional: override the active pixel area and apply mirror/rotation flags.
+    // Remove or adjust for your panel dimensions and orientation.
+    // epaper->setPanelSize(EPD_WIDTH, EPD_HEIGHT, BB_PANEL_FLAG_MIRROR_X);
+
+    // Optional: select the rendering bit-depth.
+    //   BB_MODE_1BPP — 1-bit black/white (fastest update)
+    //   BB_MODE_2BPP — 4 grey levels
+    //   BB_MODE_4BPP — 16 grey levels (set "display_bpp": 4 in JSON too)
+    // epaper->setMode(BB_MODE_4BPP);
+
     // Build the renderer on the heap and register the font table.
     dl = new FastJsonDL(*epaper);
     dl->setFontRegistry(fonts, sizeof(fonts) / sizeof(fonts[0]));
