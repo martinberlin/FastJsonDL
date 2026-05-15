@@ -105,6 +105,7 @@ Will generate the following drawing:
 | `drawLine`     | `x1`, `y1`, `x2`, `y2`   | `c`      |
 | `fillCircle`   | `x`, `y`, `r`            | `c`      |
 | `drawCircle`   | `x`, `y`, `r`            | `c`      |
+| `loadG5Image`  | `data`, `x`, `y`, `w`, `h` | `fg`, `bg` |
 
 `c` is the colour value and depends on `display_bpp`:
 - 1BPP: `0..1`   (`0` = black, `1` = white)
@@ -112,6 +113,10 @@ Will generate the following drawing:
 - 4BPP: `0..15`  (`0` = black, `15` = white)
 
 When omitted, `c` defaults to black (`0`).
+
+For `loadG5Image`, `data` must be a byte array and supports:
+- decimal byte values (`191, 187, 90, ...`)
+- or hex as strings (`"bf", "bb", "5a", ...`, optional `"0x"` prefix)
 
 > **`drawString` — y is the text baseline**
 > FastEPD BB-format fonts (produced by `fontconvert`) treat `y` as the **text
