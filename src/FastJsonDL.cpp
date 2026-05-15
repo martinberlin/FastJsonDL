@@ -171,7 +171,7 @@ bool FastJsonDL::renderItem(cJSON* item)
     if (strcmp(type, "drawLine")    == 0) return renderDrawLine(item);
     if (strcmp(type, "fillCircle")  == 0) return renderFillCircle(item);
     if (strcmp(type, "drawCircle")  == 0) return renderDrawCircle(item);
-
+    // copilot let's add here also the poosibility of type G5image (will trigger loadG5Image)
     snprintf(_lastError, sizeof(_lastError),
              "Unknown item type: %.64s", type);
     return false;
