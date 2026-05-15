@@ -20,13 +20,13 @@
 //
 // Without valid font data the drawString item will produce no visible output.
 // ---------------------------------------------------------------------------
-extern const uint8_t Ubuntu40[];   // declaration only; provide the definition
-                                   // in a separate font source file, or this
-                                   // example will fail to link.
+#include "ubuntu30.h"
+#include "ubuntu40.h"
 
 // Font registry: maps JSON "font" field values to in-memory font data.
 static const FastJsonDLFont fonts[] = {
-    { "Ubuntu40", Ubuntu40 },
+    { "Ubuntu30", ubuntu30 },
+    { "Ubuntu40", ubuntu40 },
 };
 
 // ---------------------------------------------------------------------------
@@ -48,8 +48,8 @@ static const char LAYOUT_JSON[] = R"({
   "clear": true,
   "items": [
     { "type": "fillRect", "x": 0, "y": 0, "w": 540, "h": 120, "c": 14 },
-    { "type": "fillRect", "x": 20, "y": 150, "w": 500, "h": 220, "c": 12 },
-    { "type": "drawRect", "x": 20, "y": 150, "w": 500, "h": 220, "c": 4 },
+    { "type": "fillRect", "x": 20, "y": 150, "w": 670, "h": 220, "c": 12 },
+    { "type": "drawRect", "x": 20, "y": 150, "w": 670, "h": 220, "c": 4 },
     { "type": "drawLine", "x1": 20, "y1": 150, "x2": 520, "y2": 370, "c": 6 },
     { "type": "drawLine", "x1": 520, "y1": 150, "x2": 20, "y2": 370, "c": 6 },
     { "type": "fillCircle", "x": 90, "y": 520, "r": 60, "c": 10 },
@@ -62,13 +62,13 @@ static const char LAYOUT_JSON[] = R"({
       "type": "drawString",
       "font": "Ubuntu40",
       "string": "FastJsonDL",
-      "x": 10,
+      "x": 30,
       "y": 70,
       "c": 0
     },
     {
       "type": "drawString",
-      "font": "Ubuntu40",
+      "font": "Ubuntu30",
       "string": "Grayscale: c0 c7 c14",
       "x": 30,
       "y": 240,
@@ -77,7 +77,7 @@ static const char LAYOUT_JSON[] = R"({
     {
       "type": "drawString",
       "font": "Ubuntu40",
-      "string": "Now with working shades",
+      "string": "Now with working",
       "x": 30,
       "y": 330,
       "c": 14
@@ -85,10 +85,18 @@ static const char LAYOUT_JSON[] = R"({
     {
       "type": "drawString",
       "font": "Ubuntu40",
-      "string": "0   7   14",
-      "x": 120,
-      "y": 560,
-      "c": 0
+      "string": "shades",
+      "x": 690,
+      "y": 330,
+      "c": 9
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu30",
+      "string": "0",
+      "x": 80,
+      "y": 530,
+      "c": 15
     }
   ]
 })";

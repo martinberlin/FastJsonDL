@@ -21,6 +21,73 @@ from any endpoint.  Built on top of
 
 ---
 
+## DEMO
+
+This json code:
+
+```json
+{
+  "display_bpp": 4,
+  "clear": true,
+  "items": [
+    { "type": "fillRect", "x": 0, "y": 0, "w": 540, "h": 120, "c": 14 },
+    { "type": "fillRect", "x": 20, "y": 150, "w": 670, "h": 220, "c": 12 },
+    { "type": "drawRect", "x": 20, "y": 150, "w": 670, "h": 220, "c": 4 },
+    { "type": "drawLine", "x1": 20, "y1": 150, "x2": 520, "y2": 370, "c": 6 },
+    { "type": "drawLine", "x1": 520, "y1": 150, "x2": 20, "y2": 370, "c": 6 },
+    { "type": "fillCircle", "x": 90, "y": 520, "r": 60, "c": 10 },
+    { "type": "drawCircle", "x": 90, "y": 520, "r": 60, "c": 2 },
+    { "type": "fillCircle", "x": 270, "y": 520, "r": 60, "c": 7 },
+    { "type": "drawCircle", "x": 270, "y": 520, "r": 60, "c": 2 },
+    { "type": "fillCircle", "x": 450, "y": 520, "r": 60, "c": 3 },
+    { "type": "drawCircle", "x": 450, "y": 520, "r": 60, "c": 2 },
+    {
+      "type": "drawString",
+      "font": "Ubuntu40",
+      "string": "FastJsonDL",
+      "x": 30,
+      "y": 70,
+      "c": 0
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu30",
+      "string": "Grayscale: c0 c7 c14",
+      "x": 30,
+      "y": 240,
+      "c": 7
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu40",
+      "string": "Now with working",
+      "x": 30,
+      "y": 330,
+      "c": 14
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu40",
+      "string": "shades",
+      "x": 690,
+      "y": 330,
+      "c": 9
+    },
+    {
+      "type": "drawString",
+      "font": "Ubuntu30",
+      "string": "0",
+      "x": 80,
+      "y": 530,
+      "c": 15
+    }
+  ]
+}
+```
+
+Will generate the following drawing:
+![FastJsonDL demo1](./examples/demo1.png)
+
 ## Top-level fields
 
 | Field         | Type    | Default | Description |
