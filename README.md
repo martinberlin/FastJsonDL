@@ -1,4 +1,4 @@
-# FastJsonDL
+![FastJsonDL](./examples/fastjsondl.svg)
 
 A JSON Domain Language to draw on E-Ink displays by receiving a JSON payload
 from any endpoint.  Built on top of
