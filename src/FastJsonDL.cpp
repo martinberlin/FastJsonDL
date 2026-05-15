@@ -3,6 +3,8 @@
 #include "cJSON.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Construction / configuration
@@ -171,7 +173,7 @@ bool FastJsonDL::renderItem(cJSON* item)
     if (strcmp(type, "drawLine")    == 0) return renderDrawLine(item);
     if (strcmp(type, "fillCircle")  == 0) return renderFillCircle(item);
     if (strcmp(type, "drawCircle")  == 0) return renderDrawCircle(item);
-    // copilot let's add here also the poosibility of type G5image (will trigger loadG5Image)
+    if (strcmp(type, "loadG5Image") == 0) return renderLoadG5Image(item);
     snprintf(_lastError, sizeof(_lastError),
              "Unknown item type: %.64s", type);
     return false;
@@ -318,6 +320,86 @@ bool FastJsonDL::renderDrawCircle(cJSON* item)
     int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
     _epd.drawCircle(xNode->valueint, yNode->valueint, rNode->valueint,
                     static_cast<uint32_t>(color));
+    return true;
+}
+
+static bool parseG5Bytes(cJSON* dataNode, std::vector<uint8_t>& out,
+                         char* err, size_t errSize)
+{
+    if (!cJSON_IsArray(dataNode)) {
+        snprintf(err, errSize, "loadG5Image item missing 'data' byte array");
+        return false;
+    }
+
+    out.clear();
+    out.reserve(static_cast<size_t>(cJSON_GetArraySize(dataNode)));
+
+    int idx = 0;
+    cJSON* byteNode = nullptr;
+    cJSON_ArrayForEach(byteNode, dataNode) {
+        long value = -1;
+        if (cJSON_IsNumber(byteNode)) {
+            value = static_cast<long>(byteNode->valueint);
+        } else if (cJSON_IsString(byteNode) && byteNode->valuestring) {
+            char* end = nullptr;
+            value = strtol(byteNode->valuestring, &end, 0);
+            if (!end || *end != '\0') {
+                end = nullptr;
+                value = strtol(byteNode->valuestring, &end, 16);
+            }
+            if (!end || *end != '\0') {
+                snprintf(err, errSize,
+                         "loadG5Image data[%d] must be a byte number", idx);
+                return false;
+            }
+        } else {
+            snprintf(err, errSize,
+                     "loadG5Image data[%d] must be a byte number", idx);
+            return false;
+        }
+
+        if (value < 0 || value > 255) {
+            snprintf(err, errSize,
+                     "loadG5Image data[%d] out of byte range (0..255)", idx);
+            return false;
+        }
+        out.push_back(static_cast<uint8_t>(value));
+        ++idx;
+    }
+
+    if (out.empty()) {
+        snprintf(err, errSize, "loadG5Image item has empty 'data' array");
+        return false;
+    }
+
+    return true;
+}
+
+bool FastJsonDL::renderLoadG5Image(cJSON* item)
+{
+    cJSON* dataNode = cJSON_GetObjectItemCaseSensitive(item, "data");
+    cJSON* xNode    = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode    = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* wNode    = cJSON_GetObjectItemCaseSensitive(item, "w");
+    cJSON* hNode    = cJSON_GetObjectItemCaseSensitive(item, "h");
+    cJSON* fgNode   = cJSON_GetObjectItemCaseSensitive(item, "fg");
+    cJSON* bgNode   = cJSON_GetObjectItemCaseSensitive(item, "bg");
+
+    if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode) ||
+        !cJSON_IsNumber(wNode) || !cJSON_IsNumber(hNode)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "loadG5Image item missing required numeric fields (x, y, w, h)");
+        return false;
+    }
+
+    std::vector<uint8_t> g5Data;
+    if (!parseG5Bytes(dataNode, g5Data, _lastError, sizeof(_lastError))) {
+        return false;
+    }
+
+    int fg = cJSON_IsNumber(fgNode) ? fgNode->valueint : BBEP_BLACK;
+    int bg = cJSON_IsNumber(bgNode) ? bgNode->valueint : BBEP_WHITE;
+    _epd.loadG5Image(g5Data.data(), xNode->valueint, yNode->valueint, fg, bg, 1.0f);
     return true;
 }
 
