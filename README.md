@@ -3,7 +3,10 @@
 A JSON Domain Language to draw on E-Ink displays by receiving a JSON payload
 from any endpoint.  Built on top of
 [FastEPD](https://github.com/bitbank2/FastEPD) and packaged as an
-**ESP-IDF component** targeting the ESP32 family (primary target: ESP32-C5).
+**ESP-IDF component** targeting the ESP32 family (primary targets: ESP32-C5, S3, P4).
+
+If you would like a good start to make a web-interface for a basic Canvas draw tool, you can check out:
+[FastJsonRenderer](https://github.com/martinberlin/FastJsonRenderer) Using Symfony as a PHP backend and Rest to make the dynamic canvas drawing tool. Is very basic but it can be a great starting point to understand the JSON format and draw some shapes. Soon it will have a Bluetooth send to device feature!
 
 ---
 
