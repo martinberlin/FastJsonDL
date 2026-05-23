@@ -119,7 +119,7 @@ When omitted, `c` defaults to black (`0`).
 
 For `loadG5Image`, `data` must be a byte array and supports:
 - decimal byte values (`191, 187, 90, ...`)
-- or hex as strings (`"bf", "bb", "5a", ...`, optional `"0x"` prefix)
+- or hex as strings (`"0xbf", "0xbb", "0x5a") does not work without the 0x prefix
 
 > **`drawString` — y is the text baseline**
 > FastEPD BB-format fonts (produced by `fontconvert`) treat `y` as the **text
