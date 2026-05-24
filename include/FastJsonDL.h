@@ -26,6 +26,7 @@
 //   drawLine    — x1, y1, x2, y2, c
 //   fillCircle  — x, y, r, c
 //   drawCircle  — x, y, r, c
+//   drawPixel   — x, y, [c]
 //   loadG5Image — data, x, y, w, h, [fg], [bg]
 //
 #pragma once
@@ -112,6 +113,7 @@ private:
     bool renderDrawLine(cJSON* item);
     bool renderFillCircle(cJSON* item);
     bool renderDrawCircle(cJSON* item);
+    bool renderDrawPixel(cJSON* item);
     bool renderLoadG5Image(cJSON* item);
 
     const void* findFont(const char* name) const;
