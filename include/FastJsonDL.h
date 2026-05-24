@@ -26,7 +26,7 @@
 //   drawLine    — x1, y1, x2, y2, c
 //   fillCircle  — x, y, r, c
 //   drawCircle  — x, y, r, c
-//   drawPixel   — x, y, [c]
+//   p           — x, y, [c]   (drawPixel, short alias to keep JSON small)
 //   loadG5Image — data, x, y, w, h, [fg], [bg]
 //
 #pragma once

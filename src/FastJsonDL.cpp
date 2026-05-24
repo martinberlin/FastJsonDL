@@ -173,7 +173,7 @@ bool FastJsonDL::renderItem(cJSON* item)
     if (strcmp(type, "drawLine")    == 0) return renderDrawLine(item);
     if (strcmp(type, "fillCircle")  == 0) return renderFillCircle(item);
     if (strcmp(type, "drawCircle")  == 0) return renderDrawCircle(item);
-    if (strcmp(type, "drawPixel")   == 0) return renderDrawPixel(item);
+    if (strcmp(type, "p")           == 0) return renderDrawPixel(item);
     if (strcmp(type, "loadG5Image") == 0) return renderLoadG5Image(item);
     snprintf(_lastError, sizeof(_lastError),
              "Unknown item type: %.64s", type);
@@ -332,7 +332,7 @@ bool FastJsonDL::renderDrawPixel(cJSON* item)
 
     if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode)) {
         snprintf(_lastError, sizeof(_lastError),
-                 "drawPixel item missing required numeric fields (x, y)");
+                 "p (drawPixel) item missing required numeric fields (x, y)");
         return false;
     }
 

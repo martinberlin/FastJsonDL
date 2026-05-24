@@ -108,7 +108,7 @@ Will generate the following drawing:
 | `drawLine`     | `x1`, `y1`, `x2`, `y2`   | `c`      |
 | `fillCircle`   | `x`, `y`, `r`            | `c`      |
 | `drawCircle`   | `x`, `y`, `r`            | `c`      |
-| `drawPixel`    | `x`, `y`                 | `c`      |
+| `p`            | `x`, `y`                 | `c`      |
 | `loadG5Image`  | `data`, `x`, `y`, `w`, `h` | `fg`, `bg` |
 
 `c` is the colour value and depends on `display_bpp`:
@@ -147,7 +147,7 @@ For `loadG5Image`, `data` must be a byte array and supports:
       "x": 10, "y": 70,
       "c": 0
     },
-    { "type": "drawPixel", "x": 100, "y": 100, "c": 0 }
+    { "type": "p", "x": 100, "y": 100, "c": 0 }
   ]
 }
 ```
