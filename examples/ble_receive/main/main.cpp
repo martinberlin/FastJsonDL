@@ -1,16 +1,24 @@
 // FastJsonDL — BLE GATT server receive example
 //
-// Advertises as a BLE GATT server and receives a FastJsonDL JSON payload from
-// a remote client (e.g. the FastJsonRenderer app).  Once the full payload has
-// arrived it is passed to FastJsonDL for rendering on an e-paper display.
+// Advertises as a BLE GATT server using the Nordic UART Service (NUS) UUIDs
+// and receives a FastJsonDL JSON payload from a remote client such as the
+// FastJsonRenderer web app (Chrome / Edge with Web Bluetooth enabled).
+// Once writing stops the payload is passed to FastJsonDL for rendering.
 //
-// Protocol (same wire format used by the CALE / FastJsonRenderer client):
-//   1. Client writes 5 bytes:  { 0x01, len[0], len[1], len[2], len[3] }
-//      where len is the total JSON payload size as a little-endian uint32_t.
-//   2. Client writes N data chunks containing the raw JSON bytes.
-//   3. Client writes 1 byte:   { 0x09 }  — end-of-transfer signal.
-//      The server then renders the accumulated JSON and refreshes the display.
-//   4. On disconnect the server restarts advertising and clears its state.
+// Protocol:
+//   The client sends raw JSON data as one or more BLE write-without-response
+//   chunks (up to the negotiated MTU per chunk).  No length prefix or EOF
+//   marker is used.  The firmware detects end-of-transfer by starting a short
+//   inactivity timer (RENDER_IDLE_MS) that is reset on every received chunk;
+//   when the timer fires the accumulated buffer is parsed and rendered.
+//
+// BLE UUIDs (Nordic UART Service — NUS):
+//   Service        : 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+//   Characteristic : 6e400002-b5a3-f393-e0a9-e50e24dcca9e  (write RX)
+//
+//   These are the default UUIDs used by the FastJsonRenderer web client.
+//   The Web Bluetooth filter in the client uses the service UUID, so the
+//   device MUST advertise exactly this UUID to appear in Chrome's picker.
 //
 // Target board: ESP32-C5 (or any ESP32 variant with BLE support).
 //               Adjust BB_PANEL_SENSORIA_C5 / setPanelSize() for your panel.
@@ -25,6 +33,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "freertos/timers.h"
 
 #include "nvs_flash.h"
 #include "esp_log.h"
@@ -44,16 +53,40 @@
 static const char *TAG = "BLE_FASTJSON";
 
 // ---------------------------------------------------------------------------
-// BLE identifiers
+// BLE identifiers — Nordic UART Service (NUS)
 // ---------------------------------------------------------------------------
-// Service UUID: Heart-Rate (0x180D) — reused here as the transport service.
-// Change to a custom 128-bit UUID in production if needed.
-#define BLE_SERVICE_UUID        0x180D
-#define BLE_CHAR_UUID           0x180D
+// These 128-bit UUIDs must match the service/characteristic UUIDs configured
+// in the FastJsonRenderer web client (JsonFooter.jsx DEFAULT_SERVICE_UUID /
+// DEFAULT_CHARACTERISTIC_UUID).  Chrome's Web Bluetooth requestDevice() uses
+// a service-UUID filter, so the firmware MUST advertise this exact UUID.
+//
+// Byte arrays are stored LSB-first as required by the ESP-IDF BLE stack.
+
+// 6e400001-b5a3-f393-e0a9-e50e24dcca9e  (NUS service)
+static const uint8_t NUS_SERVICE_UUID[16] = {
+    0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+    0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e,
+};
+
+// 6e400002-b5a3-f393-e0a9-e50e24dcca9e  (NUS RX characteristic — client writes here)
+static const uint8_t NUS_CHAR_UUID[16] = {
+    0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+    0x93, 0xf3, 0xa3, 0xb5, 0x02, 0x00, 0x40, 0x6e,
+};
 
 #define DEVICE_NAME             "FastJsonDL"
+// NUS service handle count: service + characteristic declaration + value + CCCD
 #define GATTS_NUM_HANDLES       4
 #define PREPARE_BUF_MAX_SIZE    1024
+
+// ---------------------------------------------------------------------------
+// Inactivity render timer
+// ---------------------------------------------------------------------------
+// After the last BLE write chunk is received, wait this many milliseconds of
+// silence before attempting to render the accumulated JSON buffer.
+#define RENDER_IDLE_MS          500
+
+static TimerHandle_t s_render_timer = nullptr;
 
 // ---------------------------------------------------------------------------
 // Receive buffer
@@ -62,11 +95,9 @@ static const char *TAG = "BLE_FASTJSON";
 // Increase if you need larger layouts, but keep it within available RAM.
 #define JSON_BUF_MAX_SIZE       (64 * 1024)
 
-static uint8_t  *s_json_buf      = nullptr; // Heap-allocated receive buffer
-static uint32_t  s_json_buf_pos  = 0;        // Write cursor into s_json_buf
-static uint32_t  s_expected_len  = 0;        // Content-length announced by client
-static uint16_t  s_write_events  = 0;        // Number of WRITE_EVT calls received
-static uint64_t  s_start_time    = 0;        // Timestamp of first data chunk
+static uint8_t  *s_json_buf     = nullptr; // Heap-allocated receive buffer
+static uint32_t  s_json_buf_pos = 0;        // Write cursor into s_json_buf
+static uint64_t  s_start_time   = 0;        // Timestamp of first received chunk
 
 // ---------------------------------------------------------------------------
 // EPD / FastJsonDL
@@ -84,10 +115,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event,
 // ---------------------------------------------------------------------------
 // GAP advertising configuration
 // ---------------------------------------------------------------------------
+// Advertise the NUS service UUID so that the Web Bluetooth filter in
+// FastJsonRenderer can discover this device.
 static uint8_t s_adv_service_uuid128[16] = {
-    /* LSB <-----------------------------------------------> MSB */
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
-    0x00, 0x10, 0x00, 0x00, 0xEE, 0x00, 0x00, 0x00,
+    0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+    0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e,
 };
 
 static esp_ble_adv_data_t s_adv_data = {
@@ -188,10 +220,8 @@ static esp_attr_value_t s_gatts_char_val = {
 // ---------------------------------------------------------------------------
 static void reset_transfer_state(void)
 {
-    s_json_buf_pos  = 0;
-    s_expected_len  = 0;
-    s_write_events  = 0;
-    s_start_time    = 0;
+    s_json_buf_pos = 0;
+    s_start_time   = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +242,22 @@ static void render_json_and_refresh(void)
         ESP_LOGI(TAG, "Render OK — refreshing display");
         s_epaper->fullUpdate();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Inactivity timer callback — fired when writing has been idle for
+// RENDER_IDLE_MS milliseconds, signalling end of transfer.
+// ---------------------------------------------------------------------------
+static void render_timer_cb(TimerHandle_t xTimer)
+{
+    if (s_json_buf_pos == 0) {
+        return;
+    }
+    uint32_t ms_receive = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+    ESP_LOGI(TAG, "Idle timeout — transfer done: %lu bytes in %lu ms",
+             (unsigned long)s_json_buf_pos, (unsigned long)ms_receive);
+    render_json_and_refresh();
+    reset_transfer_state();
 }
 
 // ---------------------------------------------------------------------------
@@ -360,8 +406,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
 
         s_profile_tab[PROFILE_APP_ID].service_id.is_primary          = true;
         s_profile_tab[PROFILE_APP_ID].service_id.id.inst_id          = 0x00;
-        s_profile_tab[PROFILE_APP_ID].service_id.id.uuid.len         = ESP_UUID_LEN_16;
-        s_profile_tab[PROFILE_APP_ID].service_id.id.uuid.uuid.uuid16 = BLE_SERVICE_UUID;
+        s_profile_tab[PROFILE_APP_ID].service_id.id.uuid.len         = ESP_UUID_LEN_128;
+        memcpy(s_profile_tab[PROFILE_APP_ID].service_id.id.uuid.uuid.uuid128,
+               NUS_SERVICE_UUID, ESP_UUID_LEN_128);
 
         esp_err_t err = esp_ble_gap_set_device_name(DEVICE_NAME);
         if (err != ESP_OK) {
@@ -402,84 +449,37 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
     }
 
     case ESP_GATTS_WRITE_EVT: {
-        s_write_events++;
-        // Record start time after the content-length command (second event onward).
-        if (s_write_events == 2) {
-            s_start_time = esp_timer_get_time();
-        }
-
         if (!param->write.is_prep) {
-            bool is_cmd = false;
-
-            // --- Command 0x01: content-length announcement ---
-            if (s_write_events == 1
-                && param->write.len == 5
-                && param->write.value[0] == 0x01)
-            {
-                is_cmd = true;
-                s_expected_len =
-                    (uint32_t)param->write.value[1]
-                    | ((uint32_t)param->write.value[2] << 8)
-                    | ((uint32_t)param->write.value[3] << 16)
-                    | ((uint32_t)param->write.value[4] << 24);
-                ESP_LOGI(TAG, "0x01 content-length: %lu bytes",
-                         (unsigned long)s_expected_len);
-
-                // Validate announced size before allocating.
-                if (s_expected_len == 0 || s_expected_len > JSON_BUF_MAX_SIZE) {
-                    ESP_LOGE(TAG, "Invalid content-length (%lu), max=%d",
-                             (unsigned long)s_expected_len, JSON_BUF_MAX_SIZE);
-                    reset_transfer_state();
-                    break;
-                }
-
-                // Allocate (or re-use) receive buffer.
-                if (s_json_buf == nullptr) {
-#if CONFIG_SPIRAM
-                    s_json_buf = (uint8_t *)heap_caps_malloc(JSON_BUF_MAX_SIZE,
-                                                              MALLOC_CAP_SPIRAM);
-#else
-                    s_json_buf = (uint8_t *)malloc(JSON_BUF_MAX_SIZE);
-#endif
-                    if (s_json_buf == nullptr) {
-                        ESP_LOGE(TAG, "Failed to allocate receive buffer (%d bytes)",
-                                 JSON_BUF_MAX_SIZE);
-                        reset_transfer_state();
-                        break;
-                    }
-                }
+            // Ignore empty writes.
+            if (param->write.len == 0) {
+                break;
             }
 
-            // --- Command 0x09: end-of-transfer ---
-            if (param->write.len == 1 && param->write.value[0] == 0x09) {
-                is_cmd = true;
-                ESP_LOGI(TAG, "0x09 EOF received");
-
-                uint32_t ms_receive = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
-                ESP_LOGI(TAG, "Transfer complete: %lu bytes in %lu ms",
-                         (unsigned long)s_json_buf_pos, (unsigned long)ms_receive);
-
-                render_json_and_refresh();
-                reset_transfer_state();
+            // Record timestamp on first chunk of a new transfer.
+            if (s_json_buf_pos == 0) {
+                s_start_time = esp_timer_get_time();
             }
 
-            // --- Data chunk ---
-            if (!is_cmd && s_json_buf != nullptr) {
-                uint32_t remaining = JSON_BUF_MAX_SIZE - s_json_buf_pos;
-                uint32_t copy_len  = param->write.len;
+            // Append chunk to receive buffer, guarding against overflow.
+            uint32_t remaining = JSON_BUF_MAX_SIZE - s_json_buf_pos;
+            uint32_t copy_len  = param->write.len;
 
-                if (copy_len > remaining) {
-                    ESP_LOGW(TAG, "Buffer overflow: truncating %lu bytes to %lu",
-                             (unsigned long)copy_len, (unsigned long)remaining);
-                    copy_len = remaining;
-                }
+            if (copy_len > remaining) {
+                ESP_LOGW(TAG, "Buffer full: truncating %lu bytes to %lu",
+                         (unsigned long)copy_len, (unsigned long)remaining);
+                copy_len = remaining;
+            }
 
-                memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
-                s_json_buf_pos += copy_len;
+            memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
+            s_json_buf_pos += copy_len;
 
-                ESP_LOGD(TAG, "WRITE_EVT buf_pos=%lu/%lu",
-                         (unsigned long)s_json_buf_pos,
-                         (unsigned long)s_expected_len);
+            ESP_LOGD(TAG, "WRITE_EVT chunk=%u total=%lu",
+                     param->write.len, (unsigned long)s_json_buf_pos);
+
+            // (Re)start the inactivity timer.  When it fires the full JSON
+            // has been received and can be rendered.
+            if (xTimerReset(s_render_timer, 0) != pdPASS) {
+                ESP_LOGE(TAG, "xTimerReset failed");
             }
         }
 
@@ -504,8 +504,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                  param->create.status, param->create.service_handle);
 
         s_profile_tab[PROFILE_APP_ID].service_handle = param->create.service_handle;
-        s_profile_tab[PROFILE_APP_ID].char_uuid.len              = ESP_UUID_LEN_16;
-        s_profile_tab[PROFILE_APP_ID].char_uuid.uuid.uuid16      = BLE_CHAR_UUID;
+        s_profile_tab[PROFILE_APP_ID].char_uuid.len = ESP_UUID_LEN_128;
+        memcpy(s_profile_tab[PROFILE_APP_ID].char_uuid.uuid.uuid128,
+               NUS_CHAR_UUID, ESP_UUID_LEN_128);
 
         esp_ble_gatts_start_service(s_profile_tab[PROFILE_APP_ID].service_handle);
 
@@ -675,6 +676,34 @@ extern "C" void app_main(void)
     // Register fonts here if your JSON layouts reference them, e.g.:
     //   static const FastJsonDLFont fonts[] = { { "Ubuntu40", ubuntu40 } };
     //   s_dl->setFontRegistry(fonts, 1);
+
+    // -----------------------------------------------------------------------
+    // Allocate receive buffer.
+    // The client sends raw JSON without a length hint, so we pre-allocate the
+    // full JSON_BUF_MAX_SIZE buffer once at boot.
+    // -----------------------------------------------------------------------
+#if CONFIG_SPIRAM
+    s_json_buf = (uint8_t *)heap_caps_malloc(JSON_BUF_MAX_SIZE, MALLOC_CAP_SPIRAM);
+#else
+    s_json_buf = (uint8_t *)malloc(JSON_BUF_MAX_SIZE);
+#endif
+    if (s_json_buf == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate receive buffer (%d bytes)", JSON_BUF_MAX_SIZE);
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Create the inactivity render timer (one-shot, auto-reload = false).
+    // -----------------------------------------------------------------------
+    s_render_timer = xTimerCreate("ble_render",
+                                   pdMS_TO_TICKS(RENDER_IDLE_MS),
+                                   pdFALSE,
+                                   nullptr,
+                                   render_timer_cb);
+    if (s_render_timer == nullptr) {
+        ESP_LOGE(TAG, "Failed to create render timer");
+        return;
+    }
 
     ESP_LOGI(TAG, "EPD initialised, waiting for BLE connection");
 
