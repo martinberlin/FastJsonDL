@@ -173,6 +173,7 @@ bool FastJsonDL::renderItem(cJSON* item)
     if (strcmp(type, "drawLine")    == 0) return renderDrawLine(item);
     if (strcmp(type, "fillCircle")  == 0) return renderFillCircle(item);
     if (strcmp(type, "drawCircle")  == 0) return renderDrawCircle(item);
+    if (strcmp(type, "p")           == 0) return renderDrawPixel(item);
     if (strcmp(type, "loadG5Image") == 0) return renderLoadG5Image(item);
     snprintf(_lastError, sizeof(_lastError),
              "Unknown item type: %.64s", type);
@@ -323,6 +324,23 @@ bool FastJsonDL::renderDrawCircle(cJSON* item)
     return true;
 }
 
+bool FastJsonDL::renderDrawPixel(cJSON* item)
+{
+    cJSON* xNode     = cJSON_GetObjectItemCaseSensitive(item, "x");
+    cJSON* yNode     = cJSON_GetObjectItemCaseSensitive(item, "y");
+    cJSON* colorNode = cJSON_GetObjectItemCaseSensitive(item, "c");
+
+    if (!cJSON_IsNumber(xNode) || !cJSON_IsNumber(yNode)) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "p (drawPixel) item missing required numeric fields (x, y)");
+        return false;
+    }
+
+    int color = cJSON_IsNumber(colorNode) ? colorNode->valueint : BBEP_BLACK;
+    _epd.drawPixel(xNode->valueint, yNode->valueint, static_cast<uint8_t>(color));
+    return true;
+}
+
 static bool parseG5Bytes(cJSON* dataNode, std::vector<uint8_t>& out,
                          char* err, size_t errSize)
 {
@@ -342,14 +360,13 @@ static bool parseG5Bytes(cJSON* dataNode, std::vector<uint8_t>& out,
             value = static_cast<long>(byteNode->valueint);
         } else if (cJSON_IsString(byteNode) && byteNode->valuestring) {
             char* end = nullptr;
-            value = strtol(byteNode->valuestring, &end, 0);
-            if (!end || *end != '\0') {
-                end = nullptr;
-                value = strtol(byteNode->valuestring, &end, 16);
-            }
+            // Always parse string tokens as hexadecimal so that bare 2-char
+            // values like "bf" or "13" are treated as 0xbf / 0x13.
+            // strtol with base 16 also accepts the optional "0x" prefix.
+            value = strtol(byteNode->valuestring, &end, 16);
             if (!end || *end != '\0') {
                 snprintf(err, errSize,
-                         "loadG5Image data[%d] must be a byte number", idx);
+                         "loadG5Image data[%d] must be a hex byte (e.g. \"bf\" or \"0xbf\")", idx);
                 return false;
             }
         } else {
