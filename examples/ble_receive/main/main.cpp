@@ -368,12 +368,24 @@ static void exec_write_event_env(prepare_type_env_t       *env,
                                   esp_ble_gatts_cb_param_t *param)
 {
     if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC) {
-        xTimerStop(s_render_timer, 0);
-        uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
-        ESP_LOGI(TAG, "Transfer complete (prepared write): %lu bytes in %lu ms",
-                 (unsigned long)s_json_buf_pos, (unsigned long)ms);
-        render_json_and_refresh();
-        reset_transfer_state();
+        // The client (e.g. Web Bluetooth) may call writeValue() per BLE chunk,
+        // each of which generates its own ATT_PREPARE + ATT_EXECUTE sequence.
+        // Only render once we have all expected bytes; until then restart the
+        // idle timer so subsequent non-prep or prep chunks can accumulate.
+        if (s_expected_len > 0 && s_json_buf_pos >= s_expected_len) {
+            xTimerStop(s_render_timer, 0);
+            uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+            ESP_LOGI(TAG, "Transfer complete (prepared write): %lu bytes in %lu ms",
+                     (unsigned long)s_json_buf_pos, (unsigned long)ms);
+            render_json_and_refresh();
+            reset_transfer_state();
+        } else {
+            ESP_LOGD(TAG, "Prepared-write commit: %lu/%lu bytes so far — waiting for more",
+                     (unsigned long)s_json_buf_pos, (unsigned long)s_expected_len);
+            if (xTimerReset(s_render_timer, 0) != pdPASS) {
+                ESP_LOGE(TAG, "xTimerReset failed");
+            }
+        }
     } else {
         ESP_LOGI(TAG, "ESP_GATT_PREP_WRITE_CANCEL");
         reset_transfer_state();
