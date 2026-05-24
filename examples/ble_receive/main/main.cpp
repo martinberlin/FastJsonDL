@@ -667,6 +667,9 @@ extern "C" void app_main(void)
 
     // Adjust width, height and flags for your specific panel.
     s_epaper->setPanelSize(1280, 780, BB_PANEL_FLAG_MIRROR_X);
+    s_epaper->clearWhite();
+    s_epaper->drawString("Waiting for BLE JSON payload", 100, 100);
+    s_epaper->fullUpdate();
 
     s_dl = new FastJsonDL(*s_epaper);
     // Register fonts here if your JSON layouts reference them, e.g.:
