@@ -3,14 +3,23 @@
 // Advertises as a BLE GATT server using the Nordic UART Service (NUS) UUIDs
 // and receives a FastJsonDL JSON payload from a remote client such as the
 // FastJsonRenderer web app (Chrome / Edge with Web Bluetooth enabled).
-// Once writing stops the payload is passed to FastJsonDL for rendering.
+// Once all bytes are received the payload is passed to FastJsonDL for rendering.
 //
 // Protocol:
-//   The client sends raw JSON data as one or more BLE write-without-response
-//   chunks (up to the negotiated MTU per chunk).  No length prefix or EOF
-//   marker is used.  The firmware detects end-of-transfer by starting a short
-//   inactivity timer (RENDER_IDLE_MS) that is reset on every received chunk;
-//   when the timer fires the accumulated buffer is parsed and rendered.
+//   The client prepends an 8-byte header and sends the resulting frame as one
+//   or more BLE write chunks.  Depending on the negotiated MTU the BLE stack
+//   may deliver chunks via normal write-without-response (ATT_WRITE_CMD) or
+//   via the prepared-write / long-write path (ATT_PREPARE_WRITE_REQ +
+//   ATT_EXECUTE_WRITE_REQ).  Both paths are handled identically.
+//
+//   Header layout (8 bytes, little-endian):
+//     Byte 0-1 : type   uint16 LE  0x0001 = JSON payload
+//     Byte 2-7 : length uint48 LE  total JSON byte count (bytes 6-7 always 0
+//                                  for payloads < 4 GB)
+//
+//   When the header is present the device renders as soon as the announced
+//   number of bytes have been received.  If no valid header is detected the
+//   device falls back to a 500 ms inactivity timer.
 //
 // BLE UUIDs (Nordic UART Service — NUS):
 //   Service        : 6e400001-b5a3-f393-e0a9-e50e24dcca9e
@@ -359,9 +368,15 @@ static void exec_write_event_env(prepare_type_env_t       *env,
                                   esp_ble_gatts_cb_param_t *param)
 {
     if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC) {
-        esp_log_buffer_hex(TAG, env->prepare_buf, env->prepare_len);
+        xTimerStop(s_render_timer, 0);
+        uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+        ESP_LOGI(TAG, "Transfer complete (prepared write): %lu bytes in %lu ms",
+                 (unsigned long)s_json_buf_pos, (unsigned long)ms);
+        render_json_and_refresh();
+        reset_transfer_state();
     } else {
         ESP_LOGI(TAG, "ESP_GATT_PREP_WRITE_CANCEL");
+        reset_transfer_state();
     }
 
     if (env->prepare_buf != nullptr) {
@@ -482,77 +497,79 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
     }
 
     case ESP_GATTS_WRITE_EVT: {
-        if (!param->write.is_prep) {
-            if (param->write.len == 0) {
-                break;
-            }
+        // Empty write: nothing to accumulate; just send ACK if required.
+        if (param->write.len == 0) {
+            write_event_env(gatts_if, &s_prepare_write_env, param);
+            break;
+        }
 
-            // ── First chunk of a new transfer ──────────────────────────────
-            if (!s_header_received) {
-                s_header_received = true;
-                s_start_time      = esp_timer_get_time();
+        // ── First chunk of a new transfer (prep or non-prep) ───────────────
+        if (!s_header_received) {
+            s_header_received = true;
+            s_start_time      = esp_timer_get_time();
 
-                // Check for valid 8-byte header: type bytes must be 0x01 0x00
-                if (param->write.len >= HEADER_SIZE
-                    && param->write.value[0] == (HEADER_TYPE_JSON & 0xFF)
-                    && param->write.value[1] == (HEADER_TYPE_JSON >> 8))
-                {
-                    // Extract 6-byte little-endian length (bytes 2-7).
-                    // Bytes 6-7 cover sizes above 4 GB — clamped to uint32 here.
-                    s_expected_len =
-                        (uint32_t)param->write.value[2]
-                        | ((uint32_t)param->write.value[3] <<  8)
-                        | ((uint32_t)param->write.value[4] << 16)
-                        | ((uint32_t)param->write.value[5] << 24);
+            // Check for valid 8-byte header: type bytes must be 0x01 0x00
+            if (param->write.len >= HEADER_SIZE
+                && param->write.value[0] == (HEADER_TYPE_JSON & 0xFF)
+                && param->write.value[1] == (HEADER_TYPE_JSON >> 8))
+            {
+                // Extract 6-byte little-endian length (bytes 2-7).
+                s_expected_len =
+                    (uint32_t)param->write.value[2]
+                    | ((uint32_t)param->write.value[3] <<  8)
+                    | ((uint32_t)param->write.value[4] << 16)
+                    | ((uint32_t)param->write.value[5] << 24);
 
-                    ESP_LOGI(TAG, "Header OK: type=0x%04x expected=%lu bytes",
-                             HEADER_TYPE_JSON, (unsigned long)s_expected_len);
+                ESP_LOGI(TAG, "Header OK: type=0x%04x expected=%lu bytes",
+                         HEADER_TYPE_JSON, (unsigned long)s_expected_len);
 
-                    // Validate announced length.
-                    if (s_expected_len == 0 || s_expected_len > JSON_BUF_MAX_SIZE) {
-                        ESP_LOGE(TAG, "Invalid header length (%lu), max=%d — dropping",
-                                 (unsigned long)s_expected_len, JSON_BUF_MAX_SIZE);
-                        reset_transfer_state();
-                        break;
-                    }
-
-                    // Copy the JSON bytes that arrived in the same chunk as the header.
-                    uint32_t payload_len = param->write.len - HEADER_SIZE;
-                    if (payload_len > 0) {
-                        memcpy(s_json_buf, param->write.value + HEADER_SIZE, payload_len);
-                        s_json_buf_pos = payload_len;
-                    }
-                } else {
-                    // No valid header — headerless transfer (backward compat).
-                    // Announce s_expected_len = 0 so the idle timer is used.
-                    ESP_LOGW(TAG, "No header detected — headerless mode (idle-timer fallback)");
-                    uint32_t copy_len = (param->write.len <= JSON_BUF_MAX_SIZE)
-                                        ? param->write.len : JSON_BUF_MAX_SIZE;
-                    memcpy(s_json_buf, param->write.value, copy_len);
-                    s_json_buf_pos = copy_len;
+                // Validate announced length.
+                if (s_expected_len == 0 || s_expected_len > JSON_BUF_MAX_SIZE) {
+                    ESP_LOGE(TAG, "Invalid header length (%lu), max=%d — dropping",
+                             (unsigned long)s_expected_len, JSON_BUF_MAX_SIZE);
+                    reset_transfer_state();
+                    write_event_env(gatts_if, &s_prepare_write_env, param);
+                    break;
                 }
 
-            // ── Subsequent chunks ───────────────────────────────────────────
+                // Copy the JSON bytes that arrived in the same chunk as the header.
+                uint32_t payload_len = param->write.len - HEADER_SIZE;
+                if (payload_len > 0) {
+                    memcpy(s_json_buf, param->write.value + HEADER_SIZE, payload_len);
+                    s_json_buf_pos = payload_len;
+                }
             } else {
-                uint32_t remaining = JSON_BUF_MAX_SIZE - s_json_buf_pos;
-                uint32_t copy_len  = param->write.len;
-
-                if (copy_len > remaining) {
-                    ESP_LOGW(TAG, "Buffer full: truncating %lu bytes to %lu",
-                             (unsigned long)copy_len, (unsigned long)remaining);
-                    copy_len = remaining;
-                }
-
-                memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
-                s_json_buf_pos += copy_len;
-
-                ESP_LOGD(TAG, "chunk=%u total=%lu/%lu",
-                         copy_len,
-                         (unsigned long)s_json_buf_pos,
-                         (unsigned long)s_expected_len);
+                // No valid header — headerless transfer (backward compat).
+                ESP_LOGW(TAG, "No header detected — headerless mode (idle-timer fallback)");
+                uint32_t copy_len = (param->write.len <= JSON_BUF_MAX_SIZE)
+                                     ? param->write.len : JSON_BUF_MAX_SIZE;
+                memcpy(s_json_buf, param->write.value, copy_len);
+                s_json_buf_pos = copy_len;
             }
 
-            // ── Render immediately if the announced length has been reached ─
+        // ── Subsequent chunks (prep or non-prep) ───────────────────────────
+        } else {
+            uint32_t remaining = JSON_BUF_MAX_SIZE - s_json_buf_pos;
+            uint32_t copy_len  = param->write.len;
+
+            if (copy_len > remaining) {
+                ESP_LOGW(TAG, "Buffer full: truncating %lu bytes to %lu",
+                         (unsigned long)copy_len, (unsigned long)remaining);
+                copy_len = remaining;
+            }
+
+            memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
+            s_json_buf_pos += copy_len;
+
+            ESP_LOGD(TAG, "chunk=%u total=%lu/%lu",
+                     copy_len,
+                     (unsigned long)s_json_buf_pos,
+                     (unsigned long)s_expected_len);
+        }
+
+        // ── Non-prep writes: render immediately or (re)start idle timer ────
+        // Prepared-write transfers defer rendering to EXEC_WRITE_EVT.
+        if (!param->write.is_prep) {
             if (s_expected_len > 0 && s_json_buf_pos >= s_expected_len) {
                 xTimerStop(s_render_timer, 0);
                 uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
@@ -560,10 +577,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                          (unsigned long)s_json_buf_pos, (unsigned long)ms);
                 render_json_and_refresh();
                 reset_transfer_state();
-                break;
+                break;  // write-without-response: no ATT ACK needed
             }
 
-            // ── (Re)start idle timer as safety-net ─────────────────────────
             if (xTimerReset(s_render_timer, 0) != pdPASS) {
                 ESP_LOGE(TAG, "xTimerReset failed");
             }
@@ -574,10 +590,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
     }
 
     case ESP_GATTS_EXEC_WRITE_EVT:
-        // Long-write (prepared write) support. In practice, clients should
-        // keep chunks below the negotiated MTU to avoid this path.
-        ESP_LOGW(TAG, "ESP_GATTS_EXEC_WRITE_EVT: long-writes not supported; "
-                 "keep chunk size <= MTU - 3 bytes");
+        // Long-write (prepared write) execute: render the accumulated buffer.
         exec_write_event_env(&s_prepare_write_env, param);
         break;
 
