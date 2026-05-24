@@ -602,7 +602,12 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
     }
 
     case ESP_GATTS_EXEC_WRITE_EVT:
-        // Long-write (prepared write) execute: render the accumulated buffer.
+        // Send ATT_EXECUTE_WRITE_RSP first so the client's writeValue() Promise
+        // resolves and it can proceed to send any remaining chunks.
+        esp_ble_gatts_send_response(gatts_if,
+                                     param->exec_write.conn_id,
+                                     param->exec_write.trans_id,
+                                     ESP_GATT_OK, nullptr);
         exec_write_event_env(&s_prepare_write_env, param);
         break;
 
