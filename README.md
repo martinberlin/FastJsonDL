@@ -228,6 +228,15 @@ Then add `FastJsonDL` to the `REQUIRES` list in your app component's
 
 ---
 
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [`examples/basic`](examples/basic) | Renders a static JSON layout at boot — good starting point. |
+| [`examples/ble_receive`](examples/ble_receive) | BLE GATT server that receives a JSON payload over Bluetooth and renders it on the display. Compatible with the [FastJsonRenderer](https://github.com/martinberlin/FastJsonRenderer) client. |
+
+---
+
 ## License
 
 See [LICENSE](LICENSE).
