@@ -80,10 +80,39 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 #define PREPARE_BUF_MAX_SIZE    1024
 
 // ---------------------------------------------------------------------------
+// Transfer protocol — 8-byte header
+// ---------------------------------------------------------------------------
+// The client MUST send an 8-byte header as the very first bytes of a transfer,
+// immediately followed by (or in the same chunk as) the raw JSON payload.
+//
+//   Byte 0-1 : type   uint16 little-endian  0x0001 = JSON payload
+//   Byte 2-7 : length uint48 little-endian  total JSON byte count
+//
+// JavaScript (FastJsonRenderer JsonFooter.jsx) build this header with:
+//
+//   const data   = new TextEncoder().encode(json);
+//   const header = new Uint8Array(8);
+//   header[0] = 0x01; header[1] = 0x00;          // type = 0x0001 LE
+//   header[2] =  data.length        & 0xFF;
+//   header[3] = (data.length >>  8) & 0xFF;
+//   header[4] = (data.length >> 16) & 0xFF;
+//   header[5] = (data.length >> 24) & 0xFF;
+//   header[6] = 0x00; header[7] = 0x00;           // upper 2 bytes (< 4 GB)
+//   const frame = new Uint8Array(8 + data.length);
+//   frame.set(header); frame.set(data, 8);
+//   // then send frame in BLE_CHUNK_SIZE slices
+//
+// If the first write chunk does NOT start with bytes {0x01, 0x00} the
+// firmware falls back to headerless mode and uses the idle timer instead.
+
+#define HEADER_SIZE             8       // total header length in bytes
+#define HEADER_TYPE_JSON        0x0001  // uint16 LE type value for JSON payloads
+
+// ---------------------------------------------------------------------------
 // Inactivity render timer
 // ---------------------------------------------------------------------------
-// After the last BLE write chunk is received, wait this many milliseconds of
-// silence before attempting to render the accumulated JSON buffer.
+// Used as a safety-net when no valid header was received (headerless mode).
+// Also fires if a transfer stalls mid-way with a known length.
 #define RENDER_IDLE_MS          500
 
 static TimerHandle_t s_render_timer = nullptr;
@@ -95,9 +124,11 @@ static TimerHandle_t s_render_timer = nullptr;
 // Increase if you need larger layouts, but keep it within available RAM.
 #define JSON_BUF_MAX_SIZE       (64 * 1024)
 
-static uint8_t  *s_json_buf     = nullptr; // Heap-allocated receive buffer
-static uint32_t  s_json_buf_pos = 0;        // Write cursor into s_json_buf
-static uint64_t  s_start_time   = 0;        // Timestamp of first received chunk
+static uint8_t  *s_json_buf       = nullptr; // Heap-allocated receive buffer
+static uint32_t  s_json_buf_pos   = 0;        // Write cursor into s_json_buf
+static uint32_t  s_expected_len   = 0;        // Payload length from header (0 = unknown)
+static bool      s_header_received = false;   // True once first chunk processed
+static uint64_t  s_start_time     = 0;        // Timestamp of first received chunk
 
 // ---------------------------------------------------------------------------
 // EPD / FastJsonDL
@@ -220,8 +251,10 @@ static esp_attr_value_t s_gatts_char_val = {
 // ---------------------------------------------------------------------------
 static void reset_transfer_state(void)
 {
-    s_json_buf_pos = 0;
-    s_start_time   = 0;
+    s_json_buf_pos    = 0;
+    s_expected_len    = 0;
+    s_header_received = false;
+    s_start_time      = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,34 +483,87 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
 
     case ESP_GATTS_WRITE_EVT: {
         if (!param->write.is_prep) {
-            // Ignore empty writes.
             if (param->write.len == 0) {
                 break;
             }
 
-            // Record timestamp on first chunk of a new transfer.
-            if (s_json_buf_pos == 0) {
-                s_start_time = esp_timer_get_time();
+            // ── First chunk of a new transfer ──────────────────────────────
+            if (!s_header_received) {
+                s_header_received = true;
+                s_start_time      = esp_timer_get_time();
+
+                // Check for valid 8-byte header: type bytes must be 0x01 0x00
+                if (param->write.len >= HEADER_SIZE
+                    && param->write.value[0] == (HEADER_TYPE_JSON & 0xFF)
+                    && param->write.value[1] == (HEADER_TYPE_JSON >> 8))
+                {
+                    // Extract 6-byte little-endian length (bytes 2-7).
+                    // Bytes 6-7 cover sizes above 4 GB — clamped to uint32 here.
+                    s_expected_len =
+                        (uint32_t)param->write.value[2]
+                        | ((uint32_t)param->write.value[3] <<  8)
+                        | ((uint32_t)param->write.value[4] << 16)
+                        | ((uint32_t)param->write.value[5] << 24);
+
+                    ESP_LOGI(TAG, "Header OK: type=0x%04x expected=%lu bytes",
+                             HEADER_TYPE_JSON, (unsigned long)s_expected_len);
+
+                    // Validate announced length.
+                    if (s_expected_len == 0 || s_expected_len > JSON_BUF_MAX_SIZE) {
+                        ESP_LOGE(TAG, "Invalid header length (%lu), max=%d — dropping",
+                                 (unsigned long)s_expected_len, JSON_BUF_MAX_SIZE);
+                        reset_transfer_state();
+                        break;
+                    }
+
+                    // Copy the JSON bytes that arrived in the same chunk as the header.
+                    uint32_t payload_len = param->write.len - HEADER_SIZE;
+                    if (payload_len > 0) {
+                        memcpy(s_json_buf, param->write.value + HEADER_SIZE, payload_len);
+                        s_json_buf_pos = payload_len;
+                    }
+                } else {
+                    // No valid header — headerless transfer (backward compat).
+                    // Announce s_expected_len = 0 so the idle timer is used.
+                    ESP_LOGW(TAG, "No header detected — headerless mode (idle-timer fallback)");
+                    uint32_t copy_len = (param->write.len <= JSON_BUF_MAX_SIZE)
+                                        ? param->write.len : JSON_BUF_MAX_SIZE;
+                    memcpy(s_json_buf, param->write.value, copy_len);
+                    s_json_buf_pos = copy_len;
+                }
+
+            // ── Subsequent chunks ───────────────────────────────────────────
+            } else {
+                uint32_t remaining = JSON_BUF_MAX_SIZE - s_json_buf_pos;
+                uint32_t copy_len  = param->write.len;
+
+                if (copy_len > remaining) {
+                    ESP_LOGW(TAG, "Buffer full: truncating %lu bytes to %lu",
+                             (unsigned long)copy_len, (unsigned long)remaining);
+                    copy_len = remaining;
+                }
+
+                memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
+                s_json_buf_pos += copy_len;
+
+                ESP_LOGD(TAG, "chunk=%u total=%lu/%lu",
+                         copy_len,
+                         (unsigned long)s_json_buf_pos,
+                         (unsigned long)s_expected_len);
             }
 
-            // Append chunk to receive buffer, guarding against overflow.
-            uint32_t remaining = JSON_BUF_MAX_SIZE - s_json_buf_pos;
-            uint32_t copy_len  = param->write.len;
-
-            if (copy_len > remaining) {
-                ESP_LOGW(TAG, "Buffer full: truncating %lu bytes to %lu",
-                         (unsigned long)copy_len, (unsigned long)remaining);
-                copy_len = remaining;
+            // ── Render immediately if the announced length has been reached ─
+            if (s_expected_len > 0 && s_json_buf_pos >= s_expected_len) {
+                xTimerStop(s_render_timer, 0);
+                uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+                ESP_LOGI(TAG, "Transfer complete (header): %lu bytes in %lu ms",
+                         (unsigned long)s_json_buf_pos, (unsigned long)ms);
+                render_json_and_refresh();
+                reset_transfer_state();
+                break;
             }
 
-            memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
-            s_json_buf_pos += copy_len;
-
-            ESP_LOGD(TAG, "WRITE_EVT chunk=%u total=%lu",
-                     param->write.len, (unsigned long)s_json_buf_pos);
-
-            // (Re)start the inactivity timer.  When it fires the full JSON
-            // has been received and can be rendered.
+            // ── (Re)start idle timer as safety-net ─────────────────────────
             if (xTimerReset(s_render_timer, 0) != pdPASS) {
                 ESP_LOGE(TAG, "xTimerReset failed");
             }
