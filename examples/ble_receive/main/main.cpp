@@ -579,22 +579,29 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                      (unsigned long)s_expected_len);
         }
 
-        // ── Non-prep writes: render immediately or (re)start idle timer ────
+        // ── Non-prep writes: render immediately if transfer is complete ────
         // Prepared-write transfers defer rendering to EXEC_WRITE_EVT.
-        if (!param->write.is_prep) {
-            if (s_expected_len > 0 && s_json_buf_pos >= s_expected_len) {
-                xTimerStop(s_render_timer, 0);
-                uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
-                ESP_LOGI(TAG, "Transfer complete (header): %lu bytes in %lu ms",
-                         (unsigned long)s_json_buf_pos, (unsigned long)ms);
-                render_json_and_refresh();
-                reset_transfer_state();
-                break;  // write-without-response: no ATT ACK needed
-            }
+        if (!param->write.is_prep
+            && s_expected_len > 0
+            && s_json_buf_pos >= s_expected_len)
+        {
+            xTimerStop(s_render_timer, 0);
+            uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+            ESP_LOGI(TAG, "Transfer complete (header): %lu bytes in %lu ms",
+                     (unsigned long)s_json_buf_pos, (unsigned long)ms);
+            render_json_and_refresh();
+            reset_transfer_state();
+            break;  // write-without-response: no ATT ACK needed
+        }
 
-            if (xTimerReset(s_render_timer, 0) != pdPASS) {
-                ESP_LOGE(TAG, "xTimerReset failed");
-            }
+        // (Re)start the idle timer on every received chunk — prep or non-prep.
+        // Previously the reset only happened for non-prep writes and EXEC_WRITE.
+        // When a large transfer spans multiple logical writeValue() calls each
+        // of which uses ATT_PREPARE_WRITE internally, the ATT_PREPARE segments
+        // between two EXEC_WRITE events never reset the timer, causing it to
+        // fire mid-transfer.
+        if (xTimerReset(s_render_timer, 0) != pdPASS) {
+            ESP_LOGE(TAG, "xTimerReset failed");
         }
 
         write_event_env(gatts_if, &s_prepare_write_env, param);
