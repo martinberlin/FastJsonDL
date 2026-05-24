@@ -55,7 +55,16 @@
 
 #include "FastEPD.h"
 #include "FastJsonDL.h"
+#include "ubuntu20.h"
+#include "ubuntu30.h"
+#include "ubuntu40.h"
 
+// Font registry: maps JSON "font" field values to in-memory font data.
+static const FastJsonDLFont fonts[] = {
+    { "Ubuntu20", ubuntu20 },
+    { "Ubuntu30", ubuntu30 },
+    { "Ubuntu40", ubuntu40 },
+};
 // ---------------------------------------------------------------------------
 // Logging tag
 // ---------------------------------------------------------------------------
@@ -798,7 +807,7 @@ extern "C" void app_main(void)
     s_dl = new FastJsonDL(*s_epaper);
     // Register fonts here if your JSON layouts reference them, e.g.:
     //   static const FastJsonDLFont fonts[] = { { "Ubuntu40", ubuntu40 } };
-    //   s_dl->setFontRegistry(fonts, 1);
+    s_dl->setFontRegistry(fonts, 3);
 
     // -----------------------------------------------------------------------
     // Allocate receive buffer.
