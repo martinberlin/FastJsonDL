@@ -47,55 +47,43 @@ static const char LAYOUT_JSON[] = R"({
   "display_bpp": 4,
   "clear": true,
   "items": [
-    { "type": "fillRect", "x": 0, "y": 0, "w": 540, "h": 120, "c": 14 },
-    { "type": "fillRect", "x": 20, "y": 150, "w": 670, "h": 220, "c": 12 },
-    { "type": "drawRect", "x": 20, "y": 150, "w": 670, "h": 220, "c": 4 },
-    { "type": "drawLine", "x1": 20, "y1": 150, "x2": 520, "y2": 370, "c": 6 },
-    { "type": "drawLine", "x1": 520, "y1": 150, "x2": 20, "y2": 370, "c": 6 },
-    { "type": "fillCircle", "x": 90, "y": 520, "r": 60, "c": 10 },
-    { "type": "drawCircle", "x": 90, "y": 520, "r": 60, "c": 2 },
-    { "type": "fillCircle", "x": 270, "y": 520, "r": 60, "c": 7 },
-    { "type": "drawCircle", "x": 270, "y": 520, "r": 60, "c": 2 },
-    { "type": "fillCircle", "x": 450, "y": 520, "r": 60, "c": 3 },
-    { "type": "drawCircle", "x": 450, "y": 520, "r": 60, "c": 2 },
     {
-      "type": "drawString",
-      "font": "Ubuntu40",
-      "string": "FastJsonDL",
-      "x": 30,
-      "y": 70,
+      "type": "fillRect",
+      "x": 210,
+      "y": 136,
+      "w": 340,
+      "h": 100,
       "c": 0
     },
     {
       "type": "drawString",
-      "font": "Ubuntu30",
-      "string": "Grayscale: c0 c7 c14",
-      "x": 30,
-      "y": 240,
-      "c": 7
+      "font": "Ubuntu40",
+      "string": "Hola Santiago, estas ejercitando esa",
+      "x": 38,
+      "y": 98,
+      "c": 0
+    },
+    {
+      "type": "fillCircle",
+      "x": 118,
+      "y": 188,
+      "r": 80,
+      "c": 10
+    },
+    {
+      "type": "fillRect",
+      "x": 718,
+      "y": 40,
+      "w": 200,
+      "h": 700,
+      "c": 6
     },
     {
       "type": "drawString",
       "font": "Ubuntu40",
-      "string": "Now with working",
-      "x": 30,
-      "y": 330,
-      "c": 14
-    },
-    {
-      "type": "drawString",
-      "font": "Ubuntu40",
-      "string": "shades",
-      "x": 690,
-      "y": 330,
-      "c": 9
-    },
-    {
-      "type": "drawString",
-      "font": "Ubuntu30",
-      "string": "0",
-      "x": 80,
-      "y": 530,
+      "string": "nutria hambrienta",
+      "x": 220,
+      "y": 198,
       "c": 15
     }
   ]
@@ -119,11 +107,14 @@ extern "C" void app_main(void)
 
     // Initialise the panel.  Replace BB_PANEL_M5PAPERS3 with the constant
     // that matches your hardware (see the BB_PANEL_* enum in FastEPD.h).
-    int rc = epaper->initPanel(BB_PANEL_M5PAPERS3);
+    int rc = epaper->initPanel(BB_PANEL_SENSORIA_C5);
     if (rc != BBEP_SUCCESS) {
         printf("EPD init failed (%d)\n", rc);
         return;
     }
+    // Optional: override the active pixel area and apply mirror/rotation flags.
+    // Remove or adjust for your panel dimensions and orientation.
+    epaper->setPanelSize(1280, 780, BB_PANEL_FLAG_MIRROR_X);
 
     // Optional: override the active pixel area and apply mirror/rotation flags.
     // Remove or adjust for your panel dimensions and orientation.
