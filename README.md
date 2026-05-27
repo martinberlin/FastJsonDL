@@ -7,6 +7,7 @@ from any endpoint.  Built on top of
 
 If you would like a good start to make a web-interface for a basic Canvas draw tool, you can check out:
 [FastJsonRenderer](https://github.com/martinberlin/FastJsonRenderer) Using Symfony as a PHP backend and Rest to make the dynamic canvas drawing tool. Is very basic but it can be a great starting point to understand the JSON format and draw some shapes. Soon it will have a Bluetooth send to device feature!
+To try it online please go to [draw.fasani.de](https://draw.fasani.de) and be aware that to save or to use the import PNG/SVG feature into G5 image you need to login with your Github account.
 
 ---
 
