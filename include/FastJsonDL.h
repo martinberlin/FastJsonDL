@@ -72,6 +72,19 @@ public:
     /// @return true on success; false on parse or render error.
     bool renderJsonString(const char* json);
 
+    /// Decompress a raw DEFLATE-compressed JSON payload and render it.
+    /// The input must be a raw DEFLATE stream (RFC 1951) — no zlib header,
+    /// no gzip header.  This corresponds to header type 0x0002 in the
+    /// FastJsonDL BLE transfer protocol.
+    ///
+    /// Requires the lbernstone__miniz ESP-IDF component to be present.
+    /// If miniz is not available the call sets lastError and returns false.
+    ///
+    /// @param compressedData  Pointer to the raw DEFLATE-compressed bytes.
+    /// @param compressedLen   Number of compressed bytes.
+    /// @return true on success; false on decompression or render error.
+    bool renderDeflatedJson(const uint8_t* compressedData, size_t compressedLen);
+
     // --- Error reporting ----------------------------------------------------
 
     /// Return a human-readable description of the last error, or an empty

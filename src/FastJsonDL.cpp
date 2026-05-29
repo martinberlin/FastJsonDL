@@ -6,6 +6,16 @@
 #include <stdlib.h>
 #include <vector>
 
+// Optional DEFLATE decompression via the lbernstone__miniz ESP-IDF component.
+// When the component is present, renderDeflatedJson() decompresses a raw
+// DEFLATE stream (RFC 1951, no zlib/gzip header) before rendering.
+#if __has_include("miniz.h")
+#  include "miniz.h"
+#  define FASTJSONDL_HAVE_MINIZ 1
+#else
+#  define FASTJSONDL_HAVE_MINIZ 0
+#endif
+
 // ---------------------------------------------------------------------------
 // Construction / configuration
 // ---------------------------------------------------------------------------
@@ -81,6 +91,38 @@ bool FastJsonDL::renderJson(const char* json, size_t len)
     return parseAndRender(json, len);
 }
 
+bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compressedLen)
+{
+    if (!compressedData || compressedLen == 0) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "renderDeflatedJson: null or empty compressed buffer");
+        return false;
+    }
+
+#if FASTJSONDL_HAVE_MINIZ
+    size_t outLen = 0;
+    // tinfl_decompress_mem_to_heap decompresses raw DEFLATE (flags = 0,
+    // i.e. no TINFL_FLAG_PARSE_ZLIB_HEADER) and returns a malloc'd buffer.
+    void* outBuf = tinfl_decompress_mem_to_heap(
+        compressedData, compressedLen, &outLen,
+        0 /* raw DEFLATE — no zlib or gzip wrapper */);
+
+    if (!outBuf) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "DEFLATE decompression failed (tinfl_decompress_mem_to_heap returned NULL)");
+        return false;
+    }
+
+    bool result = parseAndRender(static_cast<const char*>(outBuf), outLen);
+    mz_free(outBuf);
+    return result;
+#else
+    snprintf(_lastError, sizeof(_lastError),
+             "DEFLATE support not compiled in — add lbernstone__miniz to your project");
+    return false;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Core parse-and-render pipeline
 // ---------------------------------------------------------------------------
@@ -127,6 +169,17 @@ bool FastJsonDL::parseAndRender(const char* json, size_t len)
     cJSON* rotationNode = cJSON_GetObjectItemCaseSensitive(root, "rotation");
     if (cJSON_IsNumber(rotationNode)) {
         _epd.setRotation(rotationNode->valueint);
+        // Re-read the logical display dimensions after rotation so that the
+        // width/height stored in this instance reflect the rotated coordinate
+        // space.  FastEPD swaps width() and height() for 90°/270° rotations,
+        // which prevents portrait-mode items near the right/bottom edge from
+        // being silently clipped.
+        uint16_t rw = static_cast<uint16_t>(_epd.width());
+        uint16_t rh = static_cast<uint16_t>(_epd.height());
+        if (rw > 0 && rh > 0) {
+            _width  = rw;
+            _height = rh;
+        }
     }
 
     // Optional top-level "clear" field: when true, fill the framebuffer with
