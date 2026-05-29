@@ -45,6 +45,7 @@ static const FastJsonDLFont fonts[] = {
 // entirely off-screen and silently invisible.  Always set y >= font ascender.
 static const char LAYOUT_JSON[] = R"({
   "display_bpp": 4,
+  "rotation":90,
   "clear": true,
   "items": [
     {
