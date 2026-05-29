@@ -1,9 +1,11 @@
 ## IDF Component manifest for FastJsonDL
-version: "1.0.0"
+version: "1.1.0"
 description: >
   JSON Domain Language renderer for E-Ink displays.
   Parses a JSON layout description and issues drawing commands to a FASTEPD
   display instance.  Designed as an ESP-IDF component for the ESP32 family.
+  Supports optional raw-DEFLATE payload decompression via the lbernstone__miniz
+  component (type 0x0002 in the transfer header protocol).
 url: "https://github.com/martinberlin/FastJsonDL"
 dependencies:
   idf:

@@ -101,12 +101,17 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 // Transfer protocol — 8-byte header
 // ---------------------------------------------------------------------------
 // The client MUST send an 8-byte header as the very first bytes of a transfer,
-// immediately followed by (or in the same chunk as) the raw JSON payload.
+// immediately followed by (or in the same chunk as) the payload.
 //
-//   Byte 0-1 : type   uint16 little-endian  0x0001 = JSON payload
-//   Byte 2-7 : length uint48 little-endian  total JSON byte count
+//   Byte 0-1 : type   uint16 little-endian
+//                       0x0001 = plain JSON payload
+//                       0x0002 = raw DEFLATE-compressed JSON (RFC 1951,
+//                                no zlib/gzip wrapper)
+//   Byte 2-7 : length uint48 little-endian  total payload byte count
+//              (for 0x0001: uncompressed JSON size;
+//               for 0x0002: compressed payload size — NOT the JSON size)
 //
-// JavaScript (FastJsonRenderer JsonFooter.jsx) build this header with:
+// JavaScript (FastJsonRenderer JsonFooter.jsx) example for plain JSON:
 //
 //   const data   = new TextEncoder().encode(json);
 //   const header = new Uint8Array(8);
@@ -120,11 +125,17 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 //   frame.set(header); frame.set(data, 8);
 //   // then send frame in BLE_CHUNK_SIZE slices
 //
-// If the first write chunk does NOT start with bytes {0x01, 0x00} the
-// firmware falls back to headerless mode and uses the idle timer instead.
+// For compressed JSON (type 0x0002), replace header[0] with 0x02 and
+// set length to the compressed (not original) byte count.  The payload is
+// the raw DEFLATE output of deflateRaw() / pako.deflateRaw() / tinfl.
+//
+// If the first write chunk does NOT start with bytes {0x01, 0x00} or
+// {0x02, 0x00} the firmware falls back to headerless mode (plain JSON) and
+// uses the idle timer instead.
 
 #define HEADER_SIZE             8       // total header length in bytes
-#define HEADER_TYPE_JSON        0x0001  // uint16 LE type value for JSON payloads
+#define HEADER_TYPE_JSON        0x0001  // uint16 LE — plain JSON
+#define HEADER_TYPE_DEFLATE     0x0002  // uint16 LE — raw DEFLATE compressed JSON
 
 // ---------------------------------------------------------------------------
 // Inactivity render timer
@@ -145,6 +156,7 @@ static TimerHandle_t s_render_timer = nullptr;
 static uint8_t  *s_json_buf       = nullptr; // Heap-allocated receive buffer
 static uint32_t  s_json_buf_pos   = 0;        // Write cursor into s_json_buf
 static uint32_t  s_expected_len   = 0;        // Payload length from header (0 = unknown)
+static uint16_t  s_payload_type   = 0;        // Header type: HEADER_TYPE_JSON / HEADER_TYPE_DEFLATE
 static bool      s_header_received = false;   // True once first chunk processed
 static uint64_t  s_start_time     = 0;        // Timestamp of first received chunk
 
@@ -271,6 +283,7 @@ static void reset_transfer_state(void)
 {
     s_json_buf_pos    = 0;
     s_expected_len    = 0;
+    s_payload_type    = 0;
     s_header_received = false;
     s_start_time      = 0;
 }
@@ -285,9 +298,19 @@ static void render_json_and_refresh(void)
         return;
     }
 
-    ESP_LOGI(TAG, "Rendering JSON (%lu bytes)...", (unsigned long)s_json_buf_pos);
+    bool ok = false;
 
-    if (!s_dl->renderJson((const char *)s_json_buf, s_json_buf_pos)) {
+    if (s_payload_type == HEADER_TYPE_DEFLATE) {
+        ESP_LOGI(TAG, "Decompressing DEFLATE payload (%lu bytes)...",
+                 (unsigned long)s_json_buf_pos);
+        ok = s_dl->renderDeflatedJson(s_json_buf, s_json_buf_pos);
+    } else {
+        // Plain JSON (type 0x0001) or headerless mode (s_payload_type == 0).
+        ESP_LOGI(TAG, "Rendering JSON (%lu bytes)...", (unsigned long)s_json_buf_pos);
+        ok = s_dl->renderJson((const char *)s_json_buf, s_json_buf_pos);
+    }
+
+    if (!ok) {
         ESP_LOGE(TAG, "FastJsonDL error: %s", s_dl->getLastError());
     } else {
         ESP_LOGI(TAG, "Render OK — refreshing display");
@@ -529,11 +552,19 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
             s_header_received = true;
             s_start_time      = esp_timer_get_time();
 
-            // Check for valid 8-byte header: type bytes must be 0x01 0x00
-            if (param->write.len >= HEADER_SIZE
-                && param->write.value[0] == (HEADER_TYPE_JSON & 0xFF)
-                && param->write.value[1] == (HEADER_TYPE_JSON >> 8))
-            {
+            // Decode the 8-byte header.
+            // Supported type values:
+            //   0x0001 — plain JSON
+            //   0x0002 — raw DEFLATE-compressed JSON
+            uint16_t hdr_type = 0;
+            if (param->write.len >= HEADER_SIZE) {
+                hdr_type = (uint16_t)param->write.value[0]
+                           | ((uint16_t)param->write.value[1] << 8);
+            }
+
+            if (hdr_type == HEADER_TYPE_JSON || hdr_type == HEADER_TYPE_DEFLATE) {
+                s_payload_type = hdr_type;
+
                 // Extract 6-byte little-endian length (bytes 2-7).
                 s_expected_len =
                     (uint32_t)param->write.value[2]
@@ -542,7 +573,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                     | ((uint32_t)param->write.value[5] << 24);
 
                 ESP_LOGI(TAG, "Header OK: type=0x%04x expected=%lu bytes",
-                         HEADER_TYPE_JSON, (unsigned long)s_expected_len);
+                         hdr_type, (unsigned long)s_expected_len);
 
                 // Validate announced length.
                 if (s_expected_len == 0 || s_expected_len > JSON_BUF_MAX_SIZE) {
@@ -553,14 +584,14 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                     break;
                 }
 
-                // Copy the JSON bytes that arrived in the same chunk as the header.
+                // Copy the payload bytes that arrived in the same chunk as the header.
                 uint32_t payload_len = param->write.len - HEADER_SIZE;
                 if (payload_len > 0) {
                     memcpy(s_json_buf, param->write.value + HEADER_SIZE, payload_len);
                     s_json_buf_pos = payload_len;
                 }
             } else {
-                // No valid header — headerless transfer (backward compat).
+                // No valid header — headerless transfer (backward compat, plain JSON).
                 ESP_LOGW(TAG, "No header detected — headerless mode (idle-timer fallback)");
                 uint32_t copy_len = (param->write.len <= JSON_BUF_MAX_SIZE)
                                      ? param->write.len : JSON_BUF_MAX_SIZE;

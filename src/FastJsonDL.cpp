@@ -6,6 +6,16 @@
 #include <stdlib.h>
 #include <vector>
 
+// Optional DEFLATE decompression via the lbernstone__miniz ESP-IDF component.
+// When the component is present, renderDeflatedJson() decompresses a raw
+// DEFLATE stream (RFC 1951, no zlib/gzip header) before rendering.
+#if __has_include("miniz.h")
+#  include "miniz.h"
+#  define FASTJSONDL_HAVE_MINIZ 1
+#else
+#  define FASTJSONDL_HAVE_MINIZ 0
+#endif
+
 // ---------------------------------------------------------------------------
 // Construction / configuration
 // ---------------------------------------------------------------------------
@@ -81,6 +91,95 @@ bool FastJsonDL::renderJson(const char* json, size_t len)
     return parseAndRender(json, len);
 }
 
+bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compressedLen)
+{
+    if (!compressedData || compressedLen == 0) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "renderDeflatedJson: null or empty compressed buffer");
+        return false;
+    }
+
+#if FASTJSONDL_HAVE_MINIZ
+    // tinfl_decompress_mem_to_heap would place tinfl_decompressor (~34 KB) on
+    // the task stack, causing a stack-overflow fault on small ESP32 tasks.
+    // We replicate the same algorithm but allocate the decompressor on the heap.
+    tinfl_decompressor* decomp = static_cast<tinfl_decompressor*>(
+        malloc(sizeof(tinfl_decompressor)));
+    if (!decomp) {
+        snprintf(_lastError, sizeof(_lastError),
+                 "renderDeflatedJson: out of memory allocating decompressor state");
+        return false;
+    }
+    tinfl_init(decomp);
+
+    mz_uint8* pBuf   = nullptr;
+    size_t    outLen = 0;
+    size_t    outCap = 0;
+    size_t    srcOfs = 0;
+
+    for (;;) {
+        size_t srcSize = compressedLen - srcOfs;
+        size_t dstSize = outCap - outLen;
+
+        tinfl_status status = tinfl_decompress(
+            decomp,
+            static_cast<const mz_uint8*>(compressedData) + srcOfs,
+            &srcSize,
+            pBuf,
+            pBuf ? pBuf + outLen : nullptr,
+            &dstSize,
+            TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF /* raw DEFLATE, no header */);
+
+        if (status < 0 || status == TINFL_STATUS_NEEDS_MORE_INPUT) {
+            free(pBuf);
+            free(decomp);
+            snprintf(_lastError, sizeof(_lastError),
+                     "DEFLATE decompression failed (tinfl status %d)", static_cast<int>(status));
+            return false;
+        }
+
+        srcOfs += srcSize;
+        outLen += dstSize;
+
+        if (status == TINFL_STATUS_DONE)
+            break;
+
+        // Grow the output buffer, mirroring tinfl_decompress_mem_to_heap.
+        size_t newCap = outCap * 2;
+        if (newCap < 128)
+            newCap = 128;
+
+        mz_uint8* pNew = static_cast<mz_uint8*>(realloc(pBuf, newCap));
+        if (!pNew) {
+            free(pBuf);
+            free(decomp);
+            snprintf(_lastError, sizeof(_lastError),
+                     "DEFLATE decompression failed (out of memory growing output buffer)");
+            return false;
+        }
+        pBuf   = pNew;
+        outCap = newCap;
+    }
+
+    free(decomp);
+
+    if (!pBuf || outLen == 0) {
+        free(pBuf);
+        snprintf(_lastError, sizeof(_lastError),
+                 "DEFLATE decompression produced empty output");
+        return false;
+    }
+
+    bool result = parseAndRender(reinterpret_cast<const char*>(pBuf), outLen);
+    free(pBuf);
+    return result;
+#else
+    snprintf(_lastError, sizeof(_lastError),
+             "DEFLATE support not compiled in — add lbernstone__miniz to your project");
+    return false;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // Core parse-and-render pipeline
 // ---------------------------------------------------------------------------
@@ -127,6 +226,17 @@ bool FastJsonDL::parseAndRender(const char* json, size_t len)
     cJSON* rotationNode = cJSON_GetObjectItemCaseSensitive(root, "rotation");
     if (cJSON_IsNumber(rotationNode)) {
         _epd.setRotation(rotationNode->valueint);
+        // Re-read the logical display dimensions after rotation so that the
+        // width/height stored in this instance reflect the rotated coordinate
+        // space.  FastEPD swaps width() and height() for 90°/270° rotations,
+        // which prevents portrait-mode items near the right/bottom edge from
+        // being silently clipped.
+        uint16_t rw = static_cast<uint16_t>(_epd.width());
+        uint16_t rh = static_cast<uint16_t>(_epd.height());
+        if (rw > 0 && rh > 0) {
+            _width  = rw;
+            _height = rh;
+        }
     }
 
     // Optional top-level "clear" field: when true, fill the framebuffer with

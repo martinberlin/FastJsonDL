@@ -22,6 +22,10 @@ To try it online please go to [draw.fasani.de](https://draw.fasani.de) and be aw
   sequentially, so layering (e.g. black bar behind white text) works
   exactly as written.
 - Human-readable error reporting via `getLastError()`.
+- **DEFLATE decompression** — `renderDeflatedJson()` accepts a raw
+  DEFLATE-compressed payload (RFC 1951, no zlib/gzip wrapper) and
+  decompresses it on-device before rendering.  Requires the
+  `lbernstone__miniz` ESP-IDF component.
 
 ---
 
@@ -97,6 +101,7 @@ Will generate the following drawing:
 | Field         | Type    | Default | Description |
 |---------------|---------|---------|-------------|
 | `display_bpp` | integer | current EPD mode (usually `1`) | Bits per pixel: `1`, `2`, or `4`. If omitted, FastJsonDL keeps the mode active on the `FASTEPD` instance when it was constructed. |
+| `rotation`    | integer | — | Display rotation in degrees (`0`, `90`, `180`, `270`). When present, `setRotation()` is called and the logical display dimensions are refreshed so that portrait-mode items near the right/bottom edge render correctly. |
 | `clear`       | bool    | `false` | When `true`, fills the framebuffer with white before rendering any items. Use this to avoid uninitialised pixel data appearing as vertical stripes on the display. |
 
 ## Supported item types
@@ -175,8 +180,14 @@ dl.setFontRegistry(fonts, 1);
 dl.setDisplaySize(540, 960);
 dl.setDefaultBpp(1);
 
-// 5. Render a layout
+// 5a. Render a plain JSON layout
 if (!dl.renderJsonString(myJson)) {
+    printf("Error: %s\n", dl.getLastError());
+}
+
+// 5b. Render a raw DEFLATE-compressed JSON layout (type 0x0002)
+//     Requires lbernstone__miniz component.
+if (!dl.renderDeflatedJson(compressedBuf, compressedLen)) {
     printf("Error: %s\n", dl.getLastError());
 }
 
@@ -226,6 +237,23 @@ Then add `FastJsonDL` to the `REQUIRES` list in your app component's
 |------------|--------|
 | FastEPD | User-provided ESP-IDF component (e.g. local submodule/custom branch) |
 | cJSON | Ships with ESP-IDF (`json` component) |
+| lbernstone__miniz | ESP-IDF component manager (`lbernstone/miniz`); required for `renderDeflatedJson()` |
+
+### DEFLATE support
+
+`renderDeflatedJson()` requires the
+[lbernstone/miniz](https://github.com/lbernstone/miniz-esp32) ESP-IDF component.
+Add it to your project's `idf_component.yml`:
+
+```yaml
+dependencies:
+  lbernstone__miniz:
+    version: ">=0.0.1"
+```
+
+If the component is absent the library still compiles and all other methods
+work normally; `renderDeflatedJson()` will return `false` and set an error
+message explaining the missing dependency.
 
 ---
 
@@ -234,7 +262,21 @@ Then add `FastJsonDL` to the `REQUIRES` list in your app component's
 | Example | Description |
 |---------|-------------|
 | [`examples/basic`](examples/basic) | Renders a static JSON layout at boot — good starting point. |
-| [`examples/ble_receive`](examples/ble_receive) | BLE GATT server that receives a JSON payload over Bluetooth and renders it on the display. Compatible with the [FastJsonRenderer](https://github.com/martinberlin/FastJsonRenderer) client. |
+| [`examples/ble_receive`](examples/ble_receive) | BLE GATT server that receives a JSON payload over Bluetooth and renders it on the display. Supports both plain JSON (type `0x0001`) and raw DEFLATE-compressed JSON (type `0x0002`). Compatible with the [FastJsonRenderer](https://github.com/martinberlin/FastJsonRenderer) client. |
+
+### BLE transfer protocol (header format)
+
+The 8-byte binary header prepended by the client:
+
+| Bytes | Field  | Value |
+|-------|--------|-------|
+| 0–1   | type   | `0x0001` — plain JSON  \|  `0x0002` — raw DEFLATE compressed JSON |
+| 2–7   | length | payload byte count (little-endian uint48; bytes 6–7 are always `0x00`) |
+
+Type `0x0002` payloads are raw DEFLATE streams as produced by
+`pako.deflateRaw()` in JavaScript or `zlib.compress(data)[2:-4]` in Python.
+The firmware decompresses the payload on-device using `tinfl_decompress_mem_to_heap`
+from the miniz library before parsing the JSON.
 
 ---
 
