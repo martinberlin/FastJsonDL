@@ -100,21 +100,78 @@ bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compre
     }
 
 #if FASTJSONDL_HAVE_MINIZ
-    size_t outLen = 0;
-    // tinfl_decompress_mem_to_heap decompresses raw DEFLATE (flags = 0,
-    // i.e. no TINFL_FLAG_PARSE_ZLIB_HEADER) and returns a malloc'd buffer.
-    void* outBuf = tinfl_decompress_mem_to_heap(
-        compressedData, compressedLen, &outLen,
-        0 /* raw DEFLATE — no zlib or gzip wrapper */);
-
-    if (!outBuf) {
+    // tinfl_decompress_mem_to_heap would place tinfl_decompressor (~34 KB) on
+    // the task stack, causing a stack-overflow fault on small ESP32 tasks.
+    // We replicate the same algorithm but allocate the decompressor on the heap.
+    tinfl_decompressor* decomp = static_cast<tinfl_decompressor*>(
+        malloc(sizeof(tinfl_decompressor)));
+    if (!decomp) {
         snprintf(_lastError, sizeof(_lastError),
-                 "DEFLATE decompression failed (tinfl_decompress_mem_to_heap returned NULL)");
+                 "renderDeflatedJson: out of memory allocating decompressor state");
+        return false;
+    }
+    tinfl_init(decomp);
+
+    mz_uint8* pBuf   = nullptr;
+    size_t    outLen = 0;
+    size_t    outCap = 0;
+    size_t    srcOfs = 0;
+
+    for (;;) {
+        size_t srcSize = compressedLen - srcOfs;
+        size_t dstSize = outCap - outLen;
+
+        tinfl_status status = tinfl_decompress(
+            decomp,
+            static_cast<const mz_uint8*>(compressedData) + srcOfs,
+            &srcSize,
+            pBuf,
+            pBuf ? pBuf + outLen : nullptr,
+            &dstSize,
+            TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF /* raw DEFLATE, no header */);
+
+        if (status < 0 || status == TINFL_STATUS_NEEDS_MORE_INPUT) {
+            free(pBuf);
+            free(decomp);
+            snprintf(_lastError, sizeof(_lastError),
+                     "DEFLATE decompression failed (tinfl status %d)", static_cast<int>(status));
+            return false;
+        }
+
+        srcOfs += srcSize;
+        outLen += dstSize;
+
+        if (status == TINFL_STATUS_DONE)
+            break;
+
+        // Grow the output buffer, mirroring tinfl_decompress_mem_to_heap.
+        size_t newCap = outCap * 2;
+        if (newCap < 128)
+            newCap = 128;
+
+        mz_uint8* pNew = static_cast<mz_uint8*>(realloc(pBuf, newCap));
+        if (!pNew) {
+            free(pBuf);
+            free(decomp);
+            snprintf(_lastError, sizeof(_lastError),
+                     "DEFLATE decompression failed (out of memory growing output buffer)");
+            return false;
+        }
+        pBuf   = pNew;
+        outCap = newCap;
+    }
+
+    free(decomp);
+
+    if (!pBuf || outLen == 0) {
+        free(pBuf);
+        snprintf(_lastError, sizeof(_lastError),
+                 "DEFLATE decompression produced empty output");
         return false;
     }
 
-    bool result = parseAndRender(static_cast<const char*>(outBuf), outLen);
-    mz_free(outBuf);
+    bool result = parseAndRender(reinterpret_cast<const char*>(pBuf), outLen);
+    free(pBuf);
     return result;
 #else
     snprintf(_lastError, sizeof(_lastError),
