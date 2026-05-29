@@ -4,5 +4,5 @@ idf_component_register(
     REQUIRES    FastJsonDL 
                 FastEPD 
                 bt nvs_flash fonts
-                lbernstone__miniz
+                miniz
 )
