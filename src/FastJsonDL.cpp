@@ -123,11 +123,11 @@ bool FastJsonDL::parseAndRender(const char* json, size_t len)
     int effectiveBpp = cJSON_IsNumber(bppNode) ? bppNode->valueint : _bpp;
     _epd.setMode(bppToMode(effectiveBpp));
 
-    // Retrieve rotation
+    // Apply optional top-level "rotation" field only when present.
     cJSON* rotationNode = cJSON_GetObjectItemCaseSensitive(root, "rotation");
-    int rotation = cJSON_IsNumber(rotationNode) ? bppNode->valueint : 0;
-    printf("ROT:%d \n", rotation);
-    _epd.setRotation(rotation);
+    if (cJSON_IsNumber(rotationNode)) {
+        _epd.setRotation(rotationNode->valueint);
+    }
 
     // Optional top-level "clear" field: when true, fill the framebuffer with
     // white before rendering any items.  This avoids uninitialised pixel data
