@@ -4,3 +4,6 @@
 [submodule "examples/components/i2c_bus"]
 	path = examples/components/i2c_bus
 	url = https://github.com/martinberlin/i2c_bus.git
+[submodule "examples/components/miniz"]
+	path = examples/components/miniz
+	url = https://github.com/martinberlin/miniz-esp32

@@ -11,5 +11,5 @@ idf_component_register(
     SRCS        "src/FastJsonDL.cpp"
     INCLUDE_DIRS "include"
     REQUIRES     json
-    PRIV_REQUIRES FastEPD lbernstone__miniz
+    PRIV_REQUIRES FastEPD miniz
 )
