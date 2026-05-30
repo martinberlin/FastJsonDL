@@ -1,6 +1,7 @@
 #include "FastJsonDL.h"
 #include "FastEPD.h"
 #include "cJSON.h"
+#include "esp_timer.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,8 @@ FastJsonDL::FastJsonDL(FASTEPD& epd)
     , _width(0)
     , _height(0)
     , _bpp(1)
+    , _lastDecompMs(0)
+    , _lastRenderMs(0)
     , _fonts(nullptr)
     , _fontCount(0)
 {
@@ -69,6 +72,16 @@ const char* FastJsonDL::getLastError() const
     return _lastError;
 }
 
+uint32_t FastJsonDL::getLastDecompMs() const
+{
+    return _lastDecompMs;
+}
+
+uint32_t FastJsonDL::getLastRenderMs() const
+{
+    return _lastRenderMs;
+}
+
 // ---------------------------------------------------------------------------
 // Public render entry points
 // ---------------------------------------------------------------------------
@@ -79,7 +92,11 @@ bool FastJsonDL::renderJsonString(const char* json)
         snprintf(_lastError, sizeof(_lastError), "Null JSON string");
         return false;
     }
-    return parseAndRender(json, strlen(json));
+    _lastDecompMs = 0;
+    uint64_t t0 = esp_timer_get_time();
+    bool result  = parseAndRender(json, strlen(json));
+    _lastRenderMs = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    return result;
 }
 
 bool FastJsonDL::renderJson(const char* json, size_t len)
@@ -88,7 +105,11 @@ bool FastJsonDL::renderJson(const char* json, size_t len)
         snprintf(_lastError, sizeof(_lastError), "Null JSON buffer");
         return false;
     }
-    return parseAndRender(json, len);
+    _lastDecompMs = 0;
+    uint64_t t0 = esp_timer_get_time();
+    bool result  = parseAndRender(json, len);
+    _lastRenderMs = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    return result;
 }
 
 bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compressedLen)
@@ -116,6 +137,8 @@ bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compre
     size_t    outLen = 0;
     size_t    outCap = 0;
     size_t    srcOfs = 0;
+
+    uint64_t t_decomp = esp_timer_get_time();
 
     for (;;) {
         size_t srcSize = compressedLen - srcOfs;
@@ -162,6 +185,7 @@ bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compre
     }
 
     free(decomp);
+    _lastDecompMs = (uint32_t)((esp_timer_get_time() - t_decomp) / 1000);
 
     if (!pBuf || outLen == 0) {
         free(pBuf);
@@ -170,7 +194,9 @@ bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compre
         return false;
     }
 
+    uint64_t t_render = esp_timer_get_time();
     bool result = parseAndRender(reinterpret_cast<const char*>(pBuf), outLen);
+    _lastRenderMs = (uint32_t)((esp_timer_get_time() - t_render) / 1000);
     free(pBuf);
     return result;
 #else

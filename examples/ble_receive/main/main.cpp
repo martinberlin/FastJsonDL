@@ -153,12 +153,18 @@ static TimerHandle_t s_render_timer = nullptr;
 // Increase if you need larger layouts, but keep it within available RAM.
 #define JSON_BUF_MAX_SIZE       (64 * 1024)
 
-static uint8_t  *s_json_buf       = nullptr; // Heap-allocated receive buffer
-static uint32_t  s_json_buf_pos   = 0;        // Write cursor into s_json_buf
-static uint32_t  s_expected_len   = 0;        // Payload length from header (0 = unknown)
-static uint16_t  s_payload_type   = 0;        // Header type: HEADER_TYPE_JSON / HEADER_TYPE_DEFLATE
-static bool      s_header_received = false;   // True once first chunk processed
-static uint64_t  s_start_time     = 0;        // Timestamp of first received chunk
+static uint8_t  *s_json_buf        = nullptr; // Heap-allocated receive buffer
+static uint32_t  s_json_buf_pos    = 0;        // Write cursor into s_json_buf
+static uint32_t  s_expected_len    = 0;        // Payload length from header (0 = unknown)
+static uint16_t  s_payload_type    = 0;        // Header type: HEADER_TYPE_JSON / HEADER_TYPE_DEFLATE
+static bool      s_header_received = false;    // True once first chunk processed
+static uint64_t  s_start_time      = 0;        // Timestamp of first received chunk (µs)
+static uint64_t  s_receive_end_time = 0;       // Timestamp when all expected bytes arrived (µs)
+static uint32_t  s_chunk_count     = 0;        // BLE write chunks received this transfer
+static uint32_t  s_last_log_pos    = 0;        // s_json_buf_pos at last progress log
+
+// Log a receive-progress line every PROGRESS_LOG_INTERVAL bytes.
+#define PROGRESS_LOG_INTERVAL   (4 * 1024)
 
 // ---------------------------------------------------------------------------
 // EPD / FastJsonDL
@@ -281,11 +287,14 @@ static esp_attr_value_t s_gatts_char_val = {
 // ---------------------------------------------------------------------------
 static void reset_transfer_state(void)
 {
-    s_json_buf_pos    = 0;
-    s_expected_len    = 0;
-    s_payload_type    = 0;
-    s_header_received = false;
-    s_start_time      = 0;
+    s_json_buf_pos     = 0;
+    s_expected_len     = 0;
+    s_payload_type     = 0;
+    s_header_received  = false;
+    s_start_time       = 0;
+    s_receive_end_time = 0;
+    s_chunk_count      = 0;
+    s_last_log_pos     = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,24 +307,56 @@ static void render_json_and_refresh(void)
         return;
     }
 
+    // Compute receive duration.  s_receive_end_time is set at the moment the
+    // last expected byte arrives; for the idle-timer (headerless) path it is
+    // set just before this function is called.
+    uint32_t ms_receive = (s_receive_end_time > s_start_time)
+                          ? (uint32_t)((s_receive_end_time - s_start_time) / 1000)
+                          : 0;
+
     bool ok = false;
 
     if (s_payload_type == HEADER_TYPE_DEFLATE) {
-        ESP_LOGI(TAG, "Decompressing DEFLATE payload (%lu bytes)...",
-                 (unsigned long)s_json_buf_pos);
+        ESP_LOGI(TAG, "Decompressing + rendering DEFLATE payload (%lu bytes compressed, %lu chunks)...",
+                 (unsigned long)s_json_buf_pos, (unsigned long)s_chunk_count);
         ok = s_dl->renderDeflatedJson(s_json_buf, s_json_buf_pos);
     } else {
-        // Plain JSON (type 0x0001) or headerless mode (s_payload_type == 0).
-        ESP_LOGI(TAG, "Rendering JSON (%lu bytes)...", (unsigned long)s_json_buf_pos);
+        ESP_LOGI(TAG, "Rendering JSON (%lu bytes, %lu chunks)...",
+                 (unsigned long)s_json_buf_pos, (unsigned long)s_chunk_count);
         ok = s_dl->renderJson((const char *)s_json_buf, s_json_buf_pos);
     }
 
     if (!ok) {
         ESP_LOGE(TAG, "FastJsonDL error: %s", s_dl->getLastError());
-    } else {
-        ESP_LOGI(TAG, "Render OK — refreshing display");
-        s_epaper->fullUpdate();
+        return;
     }
+
+    uint64_t t_epd = esp_timer_get_time();
+    s_epaper->fullUpdate();
+    uint32_t ms_epd = (uint32_t)((esp_timer_get_time() - t_epd) / 1000);
+
+    uint32_t ms_decomp = s_dl->getLastDecompMs();
+    uint32_t ms_render = s_dl->getLastRenderMs();
+    uint32_t ms_total  = ms_receive + ms_decomp + ms_render + ms_epd;
+
+    // Throughput: received bytes / receive time → kbit/s
+    uint32_t recv_kbps = (ms_receive > 0)
+                         ? (uint32_t)((s_json_buf_pos * 8ULL) / ms_receive)
+                         : 0;
+
+    ESP_LOGI(TAG, "=== Transfer + render statistics ===");
+    ESP_LOGI(TAG, "  BLE receive  : %4lu ms  (%lu bytes, %lu chunks, %lu kbit/s)",
+             (unsigned long)ms_receive,
+             (unsigned long)s_json_buf_pos,
+             (unsigned long)s_chunk_count,
+             (unsigned long)recv_kbps);
+    if (s_payload_type == HEADER_TYPE_DEFLATE) {
+        ESP_LOGI(TAG, "  Decompress   : %4lu ms", (unsigned long)ms_decomp);
+    }
+    ESP_LOGI(TAG, "  Render JSON  : %4lu ms", (unsigned long)ms_render);
+    ESP_LOGI(TAG, "  EPD refresh  : %4lu ms", (unsigned long)ms_epd);
+    ESP_LOGI(TAG, "  Total        : %4lu ms", (unsigned long)ms_total);
+    ESP_LOGI(TAG, "====================================");
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +368,11 @@ static void render_timer_cb(TimerHandle_t xTimer)
     if (s_json_buf_pos == 0) {
         return;
     }
-    uint32_t ms_receive = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+    // Capture the "end of receive" timestamp just before rendering so that the
+    // timing summary in render_json_and_refresh() reflects the true transfer
+    // duration (not including the idle timeout period).
+    s_receive_end_time = esp_timer_get_time() - (RENDER_IDLE_MS * 1000ULL);
+    uint32_t ms_receive = (uint32_t)((s_receive_end_time - s_start_time) / 1000);
     ESP_LOGI(TAG, "Idle timeout — transfer done: %lu bytes in %lu ms",
              (unsigned long)s_json_buf_pos, (unsigned long)ms_receive);
     render_json_and_refresh();
@@ -406,9 +451,7 @@ static void exec_write_event_env(prepare_type_env_t       *env,
         // idle timer so subsequent non-prep or prep chunks can accumulate.
         if (s_expected_len > 0 && s_json_buf_pos >= s_expected_len) {
             xTimerStop(s_render_timer, 0);
-            uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
-            ESP_LOGI(TAG, "Transfer complete (prepared write): %lu bytes in %lu ms",
-                     (unsigned long)s_json_buf_pos, (unsigned long)ms);
+            s_receive_end_time = esp_timer_get_time();
             render_json_and_refresh();
             reset_transfer_state();
         } else {
@@ -551,6 +594,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
         if (!s_header_received) {
             s_header_received = true;
             s_start_time      = esp_timer_get_time();
+            s_chunk_count     = 1;
 
             // Decode the 8-byte header.
             // Supported type values:
@@ -612,11 +656,29 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
 
             memcpy(s_json_buf + s_json_buf_pos, param->write.value, copy_len);
             s_json_buf_pos += copy_len;
+            s_chunk_count++;
 
             ESP_LOGD(TAG, "chunk=%u total=%lu/%lu",
                      copy_len,
                      (unsigned long)s_json_buf_pos,
                      (unsigned long)s_expected_len);
+
+            // Periodic progress log — fires every PROGRESS_LOG_INTERVAL bytes.
+            if (s_expected_len > 0
+                && (s_json_buf_pos - s_last_log_pos) >= PROGRESS_LOG_INTERVAL)
+            {
+                s_last_log_pos = s_json_buf_pos;
+                uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
+                uint32_t speed_bps  = (elapsed_ms > 0)
+                                      ? (uint32_t)((s_json_buf_pos * 8ULL) / elapsed_ms)
+                                      : 0;
+                ESP_LOGI(TAG, "Progress: %lu/%lu bytes (%.1f%%) in %lu ms — %lu kbit/s",
+                         (unsigned long)s_json_buf_pos,
+                         (unsigned long)s_expected_len,
+                         100.0f * s_json_buf_pos / s_expected_len,
+                         (unsigned long)elapsed_ms,
+                         (unsigned long)speed_bps);
+            }
         }
 
         // ── Non-prep writes: render immediately if transfer is complete ────
@@ -626,9 +688,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
             && s_json_buf_pos >= s_expected_len)
         {
             xTimerStop(s_render_timer, 0);
-            uint32_t ms = (uint32_t)((esp_timer_get_time() - s_start_time) / 1000);
-            ESP_LOGI(TAG, "Transfer complete (header): %lu bytes in %lu ms",
-                     (unsigned long)s_json_buf_pos, (unsigned long)ms);
+            s_receive_end_time = esp_timer_get_time();
             render_json_and_refresh();
             reset_transfer_state();
             break;  // write-without-response: no ATT ACK needed
@@ -734,15 +794,16 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                  param->connect.remote_bda[2], param->connect.remote_bda[3],
                  param->connect.remote_bda[4], param->connect.remote_bda[5]);
 
+        esp_ble_gap_set_pkt_data_len(param->connect.remote_bda, 251); // max PDU bytes
         s_profile_tab[PROFILE_APP_ID].conn_id = param->connect.conn_id;
 
         // Request faster connection parameters to improve throughput.
         esp_ble_conn_update_params_t conn_params = {};
         memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
         conn_params.latency = 0;
-        conn_params.max_int = 0x20; // 40 ms
-        conn_params.min_int = 0x10; // 20 ms
-        conn_params.timeout = 1000; // 10 s supervision timeout
+        conn_params.max_int = 12;  // before 0x20 40 ms
+        conn_params.min_int = 6;   // before 0x10 20 ms
+        conn_params.timeout = 400; // before 10 s supervision timeout
         esp_ble_gap_update_conn_params(&conn_params);
         break;
     }
