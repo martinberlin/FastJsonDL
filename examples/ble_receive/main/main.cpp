@@ -794,15 +794,16 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                  param->connect.remote_bda[2], param->connect.remote_bda[3],
                  param->connect.remote_bda[4], param->connect.remote_bda[5]);
 
+        esp_ble_gap_set_pkt_data_len(param->connect.remote_bda, 251); // max PDU bytes
         s_profile_tab[PROFILE_APP_ID].conn_id = param->connect.conn_id;
 
         // Request faster connection parameters to improve throughput.
         esp_ble_conn_update_params_t conn_params = {};
         memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
         conn_params.latency = 0;
-        conn_params.max_int = 0x20; // 40 ms
-        conn_params.min_int = 0x10; // 20 ms
-        conn_params.timeout = 1000; // 10 s supervision timeout
+        conn_params.max_int = 12;  // before 0x20 40 ms
+        conn_params.min_int = 6;   // before 0x10 20 ms
+        conn_params.timeout = 400; // before 10 s supervision timeout
         esp_ble_gap_update_conn_params(&conn_params);
         break;
     }
