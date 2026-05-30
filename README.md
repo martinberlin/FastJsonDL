@@ -25,7 +25,11 @@ To try it online please go to [draw.fasani.de](https://draw.fasani.de) and be aw
 - **DEFLATE decompression** — `renderDeflatedJson()` accepts a raw
   DEFLATE-compressed payload (RFC 1951, no zlib/gzip wrapper) and
   decompresses it on-device before rendering.  Requires the
-  `lbernstone__miniz` ESP-IDF component.
+  `miniz` ESP-IDF component.
+
+To run the demos easily please clone this repository using:
+
+    git clone --recursive https://github.com/martinberlin/FastJsonDL.git
 
 ---
 
@@ -139,7 +143,7 @@ For `loadG5Image`, `data` must be a byte array and supports:
 
 ---
 
-## Example JSON
+## Minimal Hello World JSON
 
 ```json
 {
@@ -152,8 +156,7 @@ For `loadG5Image`, `data` must be a byte array and supports:
       "string": "Hello from FastJsonDL!",
       "x": 10, "y": 70,
       "c": 0
-    },
-    { "type": "p", "x": 100, "y": 100, "c": 0 }
+    }
   ]
 }
 ```
