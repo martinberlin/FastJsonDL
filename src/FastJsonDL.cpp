@@ -35,10 +35,10 @@ FastJsonDL::FastJsonDL(FASTEPD& epd)
     , _width(0)
     , _height(0)
     , _bpp(1)
-    , _fonts(nullptr)
-    , _fontCount(0)
     , _lastDecompMs(0)
     , _lastRenderMs(0)
+    , _fonts(nullptr)
+    , _fontCount(0)
 {
     _lastError[0] = '\0';
     // Initialise logical dimensions from the panel; callers may override them
