@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -96,6 +97,8 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 // NUS service handle count: service + characteristic declaration + value + CCCD
 #define GATTS_NUM_HANDLES       4
 #define PREPARE_BUF_MAX_SIZE    (64 * 1024 + 8)
+// esp_attr_value_t::attr_max_len is uint16_t, so cap it at the type limit.
+#define GATTS_CHAR_ATTR_MAX_LEN UINT16_MAX
 
 // ---------------------------------------------------------------------------
 // Transfer protocol — 8-byte header
@@ -277,7 +280,7 @@ static uint8_t s_char_init_val[] = { 0x00, 0x00 };
 static esp_gatt_char_prop_t s_char_property = 0;
 
 static esp_attr_value_t s_gatts_char_val = {
-    .attr_max_len = PREPARE_BUF_MAX_SIZE,
+    .attr_max_len = GATTS_CHAR_ATTR_MAX_LEN,
     .attr_len     = sizeof(s_char_init_val),
     .attr_value   = s_char_init_val,
 };
