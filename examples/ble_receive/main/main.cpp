@@ -95,7 +95,7 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 #define DEVICE_NAME             "FastJsonDL"
 // NUS service handle count: service + characteristic declaration + value + CCCD
 #define GATTS_NUM_HANDLES       4
-#define PREPARE_BUF_MAX_SIZE    1024
+#define PREPARE_BUF_MAX_SIZE    (64 * 1024 + 8)
 
 // ---------------------------------------------------------------------------
 // Transfer protocol — 8-byte header
@@ -691,7 +691,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
             s_receive_end_time = esp_timer_get_time();
             render_json_and_refresh();
             reset_transfer_state();
-            break;  // write-without-response: no ATT ACK needed
+            // Always send ATT response when required (write-with-response path).
+            write_event_env(gatts_if, &s_prepare_write_env, param);
+            break;
         }
 
         // (Re)start the idle timer on every received chunk — prep or non-prep.
