@@ -91,6 +91,16 @@ public:
     /// string if no error has occurred since the last successful render.
     const char* getLastError() const;
 
+    /// Return the DEFLATE decompression time (milliseconds) from the most
+    /// recent renderDeflatedJson() call.  Returns 0 when miniz is not compiled
+    /// in or when no DEFLATE render has been performed yet.
+    uint32_t getLastDecompMs() const;
+
+    /// Return the JSON parse-and-render time (milliseconds) from the most
+    /// recent render call (renderJson, renderJsonString, or the parsing phase
+    /// of renderDeflatedJson).  Returns 0 before any render has been performed.
+    uint32_t getLastRenderMs() const;
+
     // --- Configuration ------------------------------------------------------
 
     /// Override the logical display dimensions.
@@ -113,6 +123,8 @@ private:
     uint16_t _height;
     uint8_t  _bpp;
     char     _lastError[128];
+    uint32_t _lastDecompMs;  ///< Decompression duration of last renderDeflatedJson() call
+    uint32_t _lastRenderMs;  ///< Parse+render duration of last render call
 
     const FastJsonDLFont* _fonts;
     size_t                _fontCount;

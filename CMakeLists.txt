@@ -10,6 +10,6 @@
 idf_component_register(
     SRCS        "src/FastJsonDL.cpp"
     INCLUDE_DIRS "include"
-    REQUIRES     json
+    REQUIRES     json esp_timer
     PRIV_REQUIRES FastEPD miniz
 )
