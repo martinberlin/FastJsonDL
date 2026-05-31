@@ -128,6 +128,8 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 // For compressed JSON (type 0x0002), replace header[0] with 0x02 and
 // set length to the compressed (not original) byte count.  The payload is
 // the raw DEFLATE output of deflateRaw() / pako.deflateRaw() / tinfl.
+// Do not send zlib-wrapped `deflate` output here; the protocol expects raw
+// DEFLATE for type 0x0002.
 //
 // If the first write chunk does NOT start with bytes {0x01, 0x00} or
 // {0x02, 0x00} the firmware falls back to headerless mode (plain JSON) and
