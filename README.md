@@ -280,6 +280,8 @@ Type `0x0002` payloads are raw DEFLATE streams as produced by
 `pako.deflateRaw()` in JavaScript or `zlib.compress(data)[2:-4]` in Python.
 The firmware decompresses the payload on-device using `tinfl_decompress_mem_to_heap`
 from the miniz library before parsing the JSON.
+Do **not** send zlib-wrapped data (`deflate`); use raw DEFLATE only
+(`deflate-raw` / `deflateRaw`) for compressed BLE frames.
 
 ---
 

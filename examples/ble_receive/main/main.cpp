@@ -128,6 +128,8 @@ static const uint8_t NUS_CHAR_UUID[16] = {
 // For compressed JSON (type 0x0002), replace header[0] with 0x02 and
 // set length to the compressed (not original) byte count.  The payload is
 // the raw DEFLATE output of deflateRaw() / pako.deflateRaw() / tinfl.
+// Do not send zlib-wrapped `deflate` output here; the protocol expects raw
+// DEFLATE for type 0x0002.
 //
 // If the first write chunk does NOT start with bytes {0x01, 0x00} or
 // {0x02, 0x00} the firmware falls back to headerless mode (plain JSON) and
@@ -604,6 +606,11 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
             if (param->write.len >= HEADER_SIZE) {
                 hdr_type = (uint16_t)param->write.value[0]
                            | ((uint16_t)param->write.value[1] << 8);
+                ESP_LOGI(TAG,
+                         "Header bytes: [%02x %02x] decoded type=0x%04x",
+                         param->write.value[0],
+                         param->write.value[1],
+                         hdr_type);
             }
 
             if (hdr_type == HEADER_TYPE_JSON || hdr_type == HEADER_TYPE_DEFLATE) {
@@ -618,6 +625,9 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
 
                 ESP_LOGI(TAG, "Header OK: type=0x%04x expected=%lu bytes",
                          hdr_type, (unsigned long)s_expected_len);
+                if (hdr_type == HEADER_TYPE_DEFLATE) {
+                    ESP_LOGI(TAG, "Compressed header detected (0x0002)");
+                }
 
                 // Validate announced length.
                 if (s_expected_len == 0 || s_expected_len > JSON_BUF_MAX_SIZE) {
@@ -636,7 +646,8 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t     event,
                 }
             } else {
                 // No valid header — headerless transfer (backward compat, plain JSON).
-                ESP_LOGW(TAG, "No header detected — headerless mode (idle-timer fallback)");
+                ESP_LOGW(TAG, "No valid header detected (type=0x%04x) — headerless mode (idle-timer fallback)",
+                         hdr_type);
                 uint32_t copy_len = (param->write.len <= JSON_BUF_MAX_SIZE)
                                      ? param->write.len : JSON_BUF_MAX_SIZE;
                 memcpy(s_json_buf, param->write.value, copy_len);

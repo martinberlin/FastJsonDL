@@ -120,6 +120,12 @@ bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compre
         return false;
     }
 
+    // RFC 1950 zlib wrapper detector (CM=8 and FCHECK valid).
+    const bool looksLikeZlibWrapper =
+        (compressedLen >= 2) &&
+        ((compressedData[0] & 0x0F) == 0x08) &&
+        ((((unsigned int)compressedData[0] << 8) | compressedData[1]) % 31u == 0u);
+
 #if FASTJSONDL_HAVE_MINIZ
     // tinfl_decompress_mem_to_heap would place tinfl_decompressor (~34 KB) on
     // the task stack, causing a stack-overflow fault on small ESP32 tasks.
@@ -156,8 +162,13 @@ bool FastJsonDL::renderDeflatedJson(const uint8_t* compressedData, size_t compre
         if (status < 0 || status == TINFL_STATUS_NEEDS_MORE_INPUT) {
             free(pBuf);
             free(decomp);
-            snprintf(_lastError, sizeof(_lastError),
-                     "DEFLATE decompression failed (tinfl status %d)", static_cast<int>(status));
+            if (looksLikeZlibWrapper) {
+                snprintf(_lastError, sizeof(_lastError),
+                         "DEFLATE payload appears zlib-wrapped; type 0x0002 requires raw DEFLATE");
+            } else {
+                snprintf(_lastError, sizeof(_lastError),
+                         "DEFLATE decompression failed (tinfl status %d)", static_cast<int>(status));
+            }
             return false;
         }
 
