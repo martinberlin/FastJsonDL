@@ -262,7 +262,17 @@ bool FastJsonDL::parseAndRender(const char* json, size_t len)
     // Apply optional top-level "rotation" field only when present.
     cJSON* rotationNode = cJSON_GetObjectItemCaseSensitive(root, "rotation");
     if (cJSON_IsNumber(rotationNode)) {
-        _epd.setRotation(rotationNode->valueint);
+        // Only for sensoria C5
+        uint8_t rotation = rotationNode->valueint;
+        
+        #if CONFIG_IDF_TARGET_ESP32C5
+        printf("setting special C5 rotation to 180 (INV LANDSCAPE)\n" );
+        if (rotation == 0) {
+            rotation = 180;
+        }
+        #endif
+        
+        _epd.setRotation(rotation);
         // Re-read the logical display dimensions after rotation so that the
         // width/height stored in this instance reflect the rotated coordinate
         // space.  FastEPD swaps width() and height() for 90°/270° rotations,
